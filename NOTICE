@@ -1,0 +1,19 @@
+pi-ask-user
+===========
+
+This package contains source code derived from the Pi coding agent example
+extension `examples/extensions/questionnaire.ts`:
+
+  https://github.com/earendil-works/pi
+  Copyright (c) 2026 Earendil Works
+  Licensed under the MIT License.
+
+Derivation scope:
+
+  src/questions.ts   — adapted: stricter normalization, duplicate id rejection
+  src/render.ts      — adapted: extracted pure formatting helpers
+  src/component.ts   — adapted: tab/multi-select/custom-input state machine
+  src/tool.ts        — adapted: abort handling and result shaping
+  src/presence.ts    — new: optional process-local presence producer
+
+The original Pi MIT license text is reproduced in LICENSE.
