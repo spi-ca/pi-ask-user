@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createQuestionnaireComponent } from "../src/component.ts";
 import type { Question, QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
+import { makeOptions, makeQuestion } from "./helpers/question.ts";
 
 const UP = "\u001b[A";
 const DOWN = "\u001b[B";
@@ -13,27 +15,24 @@ const TAB = "\t";
 const SPACE = " ";
 
 function question(overrides: Partial<Question> = {}): Question {
-  return {
-    id: "lang",
-    label: "Language",
+  return makeQuestion({
     prompt: "Pick a language",
     options: [
       { value: "ko", label: "Korean", description: "기본값" },
       { value: "en", label: "English" },
     ],
-    multiSelect: false,
-    allowOther: true,
     ...overrides,
-  };
+  });
 }
 
-function mount(questions: Question[]) {
-  const tui = fakeTui();
+function mount(questions: Question[], options: { rows?: number; keybindings?: unknown } = {}) {
+  const tui = fakeTui(80, options.rows ?? 40);
   const settled: QuestionnaireResult[] = [];
   const component = createQuestionnaireComponent({
     questions,
     tui: tui as never,
     theme: fakeTheme(),
+    keybindings: options.keybindings,
     done: (result) => settled.push(result),
   });
   component.focused = true;
@@ -53,7 +52,7 @@ test("renders the prompt, numbered options, descriptions, and the custom entry",
   expect(output).toContain("기본값");
   expect(output).toContain("2. English");
   expect(output).toContain("3. Type something.");
-  expect(output).toContain("↑↓ navigate • Enter select • Esc cancel");
+  expect(output).toContain("↑↓ navigate • 1-9 jump • Enter select • Esc cancel");
 });
 
 test("a single question hides the tab bar and multiple questions show it", () => {
@@ -79,9 +78,7 @@ test("arrow keys move the cursor and Enter selects the highlighted option", () =
   component.handleInput(ENTER);
 
   expect(settled[0]!.cancelled).toBe(false);
-  expect(settled[0]!.answers).toEqual([
-    { id: "lang", kind: "single", value: "en", label: "English", index: 2 },
-  ]);
+  expect(settled[0]!.answers).toEqual([{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }]);
 });
 
 test("the cursor stops at both ends of the option list", () => {
@@ -111,6 +108,7 @@ test("cancel() settles the questionnaire once, matching an aborted tool call", (
 
   expect(settled).toHaveLength(1);
   expect(settled[0]!.cancelled).toBe(true);
+  expect(settled[0]!.cancelReason).toBe("aborted");
 });
 
 test("the custom entry opens an editor and free-text input becomes the answer", () => {
@@ -226,9 +224,10 @@ test("the review tab lists unanswered questions and refuses to submit", () => {
 
   component.handleInput(TAB);
   component.handleInput(TAB);
-  expect(lines().join("\n")).toContain("Unanswered: A, B");
+  const review = lines().join("\n");
+  expect(review).toContain("Unanswered: A, B");
+  expect(review).toContain("jumps to the first unanswered question");
 
-  component.handleInput(ENTER);
   expect(settled).toHaveLength(0);
 });
 
@@ -240,6 +239,440 @@ test("Escape on the review tab cancels", () => {
   component.handleInput(ESCAPE);
 
   expect(settled[0]!.cancelled).toBe(true);
+  expect(settled[0]!.cancelReason).toBe("user");
+});
+
+test("digit keys jump to a visible row and act on it", () => {
+  const { component, settled } = mount([question()]);
+
+  component.handleInput("2");
+
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "en", index: 2 });
+});
+
+test("a digit past the end of the list is ignored", () => {
+  const { component, settled } = mount([question()]);
+
+  component.handleInput("9");
+
+  expect(settled).toHaveLength(0);
+});
+
+test("a digit toggles rather than confirms on a multi-select question", () => {
+  const { component, settled, lines } = mount([question({ multiSelect: true })]);
+
+  component.handleInput("2");
+
+  expect(settled).toHaveLength(0);
+  expect(lines().join("\n")).toContain("☑ 2. English");
+});
+
+test("a digit on the custom row opens the editor", () => {
+  const { component, lines } = mount([question()]);
+
+  component.handleInput("3");
+
+  expect(lines().join("\n")).toContain("Your answer:");
+});
+
+test("long option lists show a window with overflow indicators", () => {
+  const { component, lines } = mount([question({ options: makeOptions(30), allowOther: false })], { rows: 20 });
+
+  const initial = lines().join("\n");
+  expect(initial).toContain("1. OPT 1");
+  expect(initial).toContain("more");
+  expect(initial).not.toContain("30. OPT 30");
+
+  for (let index = 0; index < 29; index++) component.handleInput(DOWN);
+  const scrolled = lines().join("\n");
+  expect(scrolled).toContain("30. OPT 30");
+  expect(scrolled).toContain("↑");
+  expect(scrolled).not.toContain("1. OPT 1\n");
+});
+
+test("option numbers are stable so a digit always reaches the same option", () => {
+  const { component, settled, lines } = mount([question({ options: makeOptions(30), allowOther: false })], {
+    rows: 20,
+  });
+
+  for (let index = 0; index < 29; index++) component.handleInput(DOWN);
+  expect(lines().join("\n")).toContain("30. OPT 30");
+
+  // Numbers label options, not window rows, so "1" scrolls back to option 1.
+  component.handleInput("1");
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "opt1", index: 1 });
+});
+
+test("slash starts a filter that narrows the option list", () => {
+  const { component, lines } = mount([
+    question({
+      options: [
+        { value: "ko", label: "Korean" },
+        { value: "en", label: "English" },
+        { value: "ja", label: "Japanese" },
+      ],
+      allowOther: false,
+    }),
+  ]);
+
+  component.handleInput("/");
+  type(component, "jap");
+
+  const output = lines().join("\n");
+  expect(output).toContain("Filter: jap");
+  expect(output).toContain("Japanese");
+  expect(output).not.toContain("Korean");
+  expect(output).toContain("Type to filter");
+});
+
+test("a filtered selection answers with the original option position", () => {
+  const { component, settled } = mount([
+    question({
+      options: [
+        { value: "ko", label: "Korean" },
+        { value: "en", label: "English" },
+        { value: "ja", label: "Japanese" },
+      ],
+      allowOther: false,
+    }),
+  ]);
+
+  component.handleInput("/");
+  type(component, "jap");
+  component.handleInput(ENTER);
+
+  expect(settled[0]!.answers[0]).toEqual({
+    id: "lang",
+    kind: "single",
+    value: "ja",
+    label: "Japanese",
+    index: 3,
+  });
+});
+
+test("Escape clears the filter instead of cancelling the questionnaire", () => {
+  const { component, settled, lines } = mount([question({ allowOther: false })]);
+
+  component.handleInput("/");
+  type(component, "zzz");
+  expect(lines().join("\n")).toContain("No options match the filter");
+
+  component.handleInput(ESCAPE);
+  expect(settled).toHaveLength(0);
+  const restored = lines().join("\n");
+  expect(restored).toContain("1. Korean");
+  expect(restored).not.toContain("Filter:");
+
+  component.handleInput(ESCAPE);
+  expect(settled[0]!.cancelled).toBe(true);
+});
+
+test("Space still toggles while a filter is being typed", () => {
+  const { component, lines } = mount([question({ multiSelect: true })]);
+
+  component.handleInput("/");
+  type(component, "kor");
+  component.handleInput(SPACE);
+
+  expect(lines().join("\n")).toContain("☑ 1. Korean");
+});
+
+test("a and c select and clear every multi-select option", () => {
+  const { component, lines } = mount([question({ multiSelect: true })]);
+
+  component.handleInput("a");
+  let output = lines().join("\n");
+  expect(output).toContain("☑ 1. Korean");
+  expect(output).toContain("☑ 2. English");
+  expect(output).toContain("2 selected");
+
+  component.handleInput("c");
+  output = lines().join("\n");
+  expect(output).toContain("☐ 1. Korean");
+  expect(output).toContain("0 selected");
+});
+
+test("a bounded multi-select question shows the range and refuses extra choices", () => {
+  const { component, lines } = mount([
+    question({ multiSelect: true, minSelections: 1, maxSelections: 1, options: makeOptions(3), allowOther: false }),
+  ]);
+
+  expect(lines().join("\n")).toContain("Choose exactly 1");
+
+  component.handleInput(SPACE);
+  component.handleInput(DOWN);
+  component.handleInput(SPACE);
+
+  const output = lines().join("\n");
+  expect(output).toContain("Select at most 1 option");
+  expect(output).toContain("1 selected");
+});
+
+test("multi-select free text is added alongside the chosen options", () => {
+  const { component, settled, lines } = mount([question({ multiSelect: true })]);
+
+  component.handleInput(SPACE);
+  component.handleInput(DOWN);
+  component.handleInput(DOWN);
+  component.handleInput(ENTER);
+  type(component, "Klingon");
+  component.handleInput(ENTER);
+
+  expect(settled[0]!.answers).toEqual([
+    {
+      id: "lang",
+      kind: "multi",
+      selections: [{ value: "ko", label: "Korean", index: 1 }],
+      custom: "Klingon",
+    },
+  ]);
+  expect(lines).toBeDefined();
+});
+
+test("reopening the editor keeps the multi-select text that was already typed", () => {
+  const { component, lines } = mount([
+    question({ multiSelect: true, minSelections: 2, maxSelections: 2, allowOther: true }),
+  ]);
+
+  // Text alone does not meet minSelections, so the question stays open.
+  component.handleInput(DOWN);
+  component.handleInput(DOWN);
+  component.handleInput(ENTER);
+  type(component, "Klingon");
+  component.handleInput(ENTER);
+  expect(lines().join("\n")).toContain("(wrote) Klingon");
+
+  component.handleInput(ENTER);
+  expect(lines().join("\n")).toContain("Klingon");
+});
+
+test("an optional question offers a skip row that records a skipped answer", () => {
+  const { component, settled, lines } = mount([question({ optional: true, allowOther: false })]);
+
+  expect(lines().join("\n")).toContain("3. Skip this question.");
+
+  component.handleInput("3");
+  expect(settled[0]!.answers).toEqual([{ id: "lang", kind: "skipped" }]);
+});
+
+test("requireReview keeps a single question open until the review tab submits", () => {
+  const { component, settled, lines } = mount([question({ requireReview: true })]);
+
+  component.handleInput(ENTER);
+  expect(settled).toHaveLength(0);
+  const review = lines().join("\n");
+  expect(review).toContain("Ready to submit");
+  expect(review).toContain("Language: Korean");
+
+  component.handleInput(ENTER);
+  expect(settled[0]!.cancelled).toBe(false);
+});
+
+test("defaultValues place the cursor and preselect multi-select options", () => {
+  const single = mount([question({ options: makeOptions(3), defaultValues: ["opt3"], allowOther: false })]);
+  single.component.handleInput(ENTER);
+  expect(single.settled[0]!.answers[0]).toMatchObject({ value: "opt3" });
+
+  const multi = mount([
+    question({ multiSelect: true, options: makeOptions(3), defaultValues: ["opt2"], allowOther: false }),
+  ]);
+  expect(multi.lines().join("\n")).toContain("☑ 2. OPT 2");
+});
+
+test("Enter on an incomplete review jumps to the first unanswered question", () => {
+  const questions = [question({ id: "a", label: "A" }), question({ id: "b", label: "B" })];
+  const { component, settled, lines } = mount(questions);
+
+  component.handleInput(TAB);
+  component.handleInput(TAB);
+  expect(lines().join("\n")).toContain("Unanswered: A, B");
+
+  component.handleInput(ENTER);
+  expect(settled).toHaveLength(0);
+  expect(lines().join("\n")).not.toContain("Ready to submit");
+});
+
+test("returning to an answered question restores the cursor to that answer", () => {
+  const questions = [
+    question({ id: "a", label: "A", options: makeOptions(3), allowOther: false }),
+    question({ id: "b", label: "B", allowOther: false }),
+  ];
+  const { component, lines } = mount(questions);
+
+  component.handleInput("3");
+  component.handleInput(LEFT);
+
+  expect(lines().join("\n")).toContain("> 3. OPT 3");
+});
+
+test("custom keybindings replace the defaults in input and help text", () => {
+  const keybindings = {
+    matches: (data: string, keybinding: string) => (keybinding === "tui.select.confirm" ? data === "\u0013" : false),
+    getKeys: (keybinding: string) => (keybinding === "tui.select.confirm" ? ["ctrl+s"] : ["escape"]),
+  };
+  const { component, settled, lines } = mount([question()], { keybindings });
+
+  expect(lines().join("\n")).toContain("Ctrl+S select");
+
+  // Enter was rebound away from confirm, so it must not select.
+  component.handleInput(ENTER);
+  expect(settled).toHaveLength(0);
+
+  component.handleInput("\u0013");
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+});
+
+test("a keybindings manager that throws falls back to the default keys", () => {
+  const keybindings = {
+    matches: () => {
+      throw new Error("broken");
+    },
+    getKeys: () => {
+      throw new Error("broken");
+    },
+  };
+  const { component, settled, lines } = mount([question()], { keybindings });
+
+  expect(lines().join("\n")).toContain("Enter select");
+  component.handleInput(ENTER);
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+});
+
+test("Escape still cancels when a manager claims every key", () => {
+  // A manager matching everything would otherwise consume Enter and Escape as
+  // cursor movement, leaving the questionnaire with no way out.
+  const keybindings = { matches: () => true, getKeys: () => ["up"] };
+  const { component, settled } = mount([question()], { keybindings });
+
+  component.handleInput(ESCAPE);
+
+  expect(settled).toHaveLength(1);
+  expect(settled[0]!.cancelled).toBe(true);
+  expect(settled[0]!.cancelReason).toBe("user");
+});
+
+test("the configured cancel key closes the free-text editor", () => {
+  const CANCEL = "\u0018";
+  const keybindings = {
+    matches: (data: string, keybinding: string) => keybinding === "tui.select.cancel" && data === CANCEL,
+    getKeys: (keybinding: string) => (keybinding === "tui.select.cancel" ? ["ctrl+x"] : ["enter"]),
+  };
+  const { component, settled, lines } = mount([question()], { keybindings });
+
+  component.handleInput("3");
+  expect(lines().join("\n")).toContain("Your answer:");
+  expect(lines().join("\n")).toContain("Ctrl+X to cancel");
+
+  component.handleInput(CANCEL);
+  expect(lines().join("\n")).not.toContain("Your answer:");
+  expect(settled).toHaveLength(0);
+});
+
+test("the editor hint names the input submit key, not the select confirm key", () => {
+  const keybindings = {
+    matches: () => false,
+    getKeys: (keybinding: string) =>
+      keybinding === "tui.input.submit" ? ["ctrl+m"] : keybinding === "tui.select.confirm" ? ["ctrl+s"] : ["escape"],
+  };
+  const { component, lines } = mount([question()], { keybindings });
+
+  component.handleInput("3");
+  const editing = lines().join("\n");
+  expect(editing).toContain("Ctrl+M to submit");
+  expect(editing).not.toContain("Ctrl+S to submit");
+});
+
+test("typing safe text leaves the cursor alone so mid-string edits work", () => {
+  const { component, settled } = mount([question()]);
+
+  component.handleInput("3");
+  type(component, "abc");
+  component.handleInput(LEFT);
+  component.handleInput(LEFT);
+  type(component, "X");
+  component.handleInput(ENTER);
+
+  // A cursor reset would have produced "abcX" instead.
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "aXbc" });
+});
+
+test("a space typed mid-word is preserved rather than trimmed away", () => {
+  const { component, settled } = mount([question()]);
+
+  component.handleInput("3");
+  type(component, "two words");
+  component.handleInput(ENTER);
+
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "two words" });
+});
+
+test("a blank submit keeps the inline error until the text changes", () => {
+  const { component, lines } = mount([question()]);
+
+  component.handleInput("3");
+  component.handleInput(ENTER);
+  expect(lines().join("\n")).toContain("Enter a response before continuing");
+
+  // A second failed submit does not change the text, so the error stays.
+  component.handleInput(ENTER);
+  expect(lines().join("\n")).toContain("Enter a response before continuing");
+
+  type(component, "x");
+  expect(lines().join("\n")).not.toContain("Enter a response before continuing");
+});
+
+test("pasted control and bidi characters never reach the editor display", () => {
+  const { component, settled, lines } = mount([question()]);
+
+  component.handleInput("3");
+  // pi-tui's own paste filter only drops code units below U+0020.
+  type(component, "ko\u009brean\u202e");
+
+  const editing = lines().join("\n");
+  expect(editing).not.toContain("\u009b");
+  expect(editing).not.toContain("\u202e");
+
+  component.handleInput(ENTER);
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "korean" });
+});
+
+test("free text is capped at otherMaxLength while typing", () => {
+  const { component, settled } = mount([question({ otherMaxLength: 5 })]);
+
+  component.handleInput("3");
+  type(component, "abcdefghij");
+  component.handleInput(ENTER);
+
+  expect([...(settled[0]!.answers[0] as { value: string }).value].length).toBe(5);
+});
+
+test("rendered lines stay within the width for filters, viewports, and bounds", () => {
+  const { component, lines } = mount(
+    [
+      question({
+        id: "a",
+        label: "A".repeat(50),
+        prompt: "P".repeat(200),
+        multiSelect: true,
+        minSelections: 2,
+        maxSelections: 3,
+        options: makeOptions(30, "verylongoptionname"),
+      }),
+      question({ id: "b" }),
+    ],
+    { rows: 18 },
+  );
+
+  component.handleInput("/");
+  type(component, "very");
+  component.handleInput(SPACE);
+  component.handleInput(ENTER);
+
+  for (const width of [1, 3, 10, 24, 80]) {
+    // The cursor marker is a zero-width escape the TUI strips, so measure
+    // visible width rather than raw string length.
+    for (const line of lines(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
 });
 
 test("Tab and arrow navigation wrap across question and review tabs", () => {

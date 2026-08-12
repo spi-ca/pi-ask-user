@@ -131,7 +131,11 @@ test("malformed or foreign ready payloads are ignored", () => {
   presence.startSession(fakeCtx("s1"));
 
   presence.handleReady(undefined);
-  presence.handleReady({ version: 2, sessionId: "s1", consumer: { id: PRESENCE_CONSUMER_ID, capabilities: [PRESENCE_REMOVE_CAPABILITY] } });
+  presence.handleReady({
+    version: 2,
+    sessionId: "s1",
+    consumer: { id: PRESENCE_CONSUMER_ID, capabilities: [PRESENCE_REMOVE_CAPABILITY] },
+  });
   presence.handleReady(readyPayload("s1", { consumer: { id: "other", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }));
   presence.handleReady(readyPayload("s1", { consumer: { id: PRESENCE_CONSUMER_ID, capabilities: [] } }));
   presence.handleReady(readyPayload("s1", { consumer: { id: PRESENCE_CONSUMER_ID } }));
@@ -240,4 +244,11 @@ test("presence payloads never carry questionnaire content", () => {
   expect(serialized).not.toContain("prompt");
   expect(serialized).not.toContain("options");
   expect(serialized).not.toContain("answers");
+  // Fields added alongside skipping, filtering, and free text must stay out too.
+  for (const field of ["custom", "filter", "skipped", "selections", "defaultValues", "value"]) {
+    expect(serialized).not.toContain(`"${field}"`);
+  }
+  // The only label in a payload is the fixed source label.
+  expect(serialized.match(/"label"/g)).toHaveLength(1);
+  expect(serialized).toContain('"label":"Pi needs your input"');
 });
