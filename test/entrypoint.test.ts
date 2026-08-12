@@ -2,15 +2,10 @@ import { expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import askUser from "../index.ts";
 import { PRESENCE_READY_EVENT } from "../src/presence.ts";
-import {
-  CANCELLED_MESSAGE,
-  NON_INTERACTIVE_MESSAGE,
-  TOOL_DESCRIPTION,
-  TOOL_LABEL,
-  TOOL_NAME,
-} from "../src/tool.ts";
+import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
+import { makeQuestion } from "./helpers/question.ts";
 
 type RegisteredTool = {
   name: string;
@@ -121,7 +116,9 @@ test("non-interactive sessions return the UI-unavailable error", async () => {
   } as unknown as ExtensionContext);
 
   expect(result.content[0]!.text).toBe(NON_INTERACTIVE_MESSAGE);
-  expect((result.details as QuestionnaireResult).cancelled).toBe(true);
+  const details = result.details as QuestionnaireResult;
+  expect(details.cancelled).toBe(true);
+  expect(details.cancelReason).toBe("unavailable");
 });
 
 test("invalid parameters are rejected before the UI opens", async () => {
@@ -147,27 +144,37 @@ test("a completed questionnaire returns labeled text and structured details", as
   const { tool } = register();
   const result = await tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, tuiContext(["\u001b[B", "\r"]));
 
-  expect(result.content[0]!.text).toBe("Language: English");
+  expect(result.content[0]!.text).toBe("Language: English [en]");
   const details = result.details as QuestionnaireResult;
   expect(details.cancelled).toBe(false);
   expect(details.answers).toEqual([{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }]);
 });
 
-test("a cancelled questionnaire reports the cancellation message", async () => {
+test("digit keys select an option directly", async () => {
+  const { tool } = register();
+  const result = await tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, tuiContext(["2"]));
+
+  expect(result.content[0]!.text).toBe("Language: English [en]");
+});
+
+test("a cancelled questionnaire reports the reason and any partial answers", async () => {
   const { tool } = register();
   const result = await tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, tuiContext(["\u001b"]));
 
-  expect(result.content[0]!.text).toBe(CANCELLED_MESSAGE);
-  expect((result.details as QuestionnaireResult).cancelled).toBe(true);
+  expect(result.content[0]!.text).toBe(`${CANCELLED_MESSAGE} (the user cancelled)`);
+  const details = result.details as QuestionnaireResult;
+  expect(details.cancelled).toBe(true);
+  expect(details.cancelReason).toBe("user");
 });
 
-test("an already aborted signal cancels the questionnaire", async () => {
+test("an already aborted signal cancels the questionnaire as aborted", async () => {
   const { tool } = register();
   const controller = new AbortController();
   controller.abort();
 
   const result = await tool.execute("call-1", SINGLE_QUESTION, controller.signal, undefined, tuiContext([]));
-  expect(result.content[0]!.text).toBe(CANCELLED_MESSAGE);
+  expect(result.content[0]!.text).toContain("the tool call was aborted");
+  expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
 });
 
 test("an abort before the component mounts still cancels", async () => {
@@ -175,8 +182,15 @@ test("an abort before the component mounts still cancels", async () => {
   const controller = new AbortController();
   controller.abort();
 
-  const result = await tool.execute("call-1", SINGLE_QUESTION, controller.signal, undefined, tuiContext([], "s1", true));
-  expect(result.content[0]!.text).toBe(CANCELLED_MESSAGE);
+  const result = await tool.execute(
+    "call-1",
+    SINGLE_QUESTION,
+    controller.signal,
+    undefined,
+    tuiContext([], "s1", true),
+  );
+  expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
+  expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
 });
 
 test("an abort while the questionnaire is open cancels it", async () => {
@@ -186,7 +200,8 @@ test("an abort while the questionnaire is open cancels it", async () => {
 
   controller.abort();
   const result = await pending;
-  expect(result.content[0]!.text).toBe(CANCELLED_MESSAGE);
+  expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
+  expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
 });
 
 test("renderCall summarizes the question count and labels", () => {
@@ -205,13 +220,9 @@ test("renderCall summarizes the question count and labels", () => {
   expect(empty.text).not.toContain("(");
 });
 
-test("renderResult marks answers, free text, and cancellation", () => {
+test("renderResult marks answers, free text, skips, and cancellation", () => {
   const { tool } = register();
-  const questions = SINGLE_QUESTION.questions.map((item) => ({
-    ...item,
-    multiSelect: false,
-    allowOther: true,
-  })) as QuestionnaireResult["questions"];
+  const questions = [makeQuestion({ id: "lang", label: "Language" })];
 
   const answered = tool.renderResult(
     {
@@ -228,16 +239,42 @@ test("renderResult marks answers, free text, and cancellation", () => {
   ) as { text: string };
   expect(answered.text).toBe("✓ Language: (wrote) Klingon");
 
+  const skipped = tool.renderResult(
+    {
+      content: [{ type: "text", text: "Language: (skipped)" }],
+      details: {
+        questions,
+        answers: [{ id: "lang", kind: "skipped" }],
+        cancelled: false,
+      } satisfies QuestionnaireResult,
+    },
+    {},
+    fakeTheme(),
+    {},
+  ) as { text: string };
+  expect(skipped.text).toBe("– Language: (skipped)");
+
   const cancelled = tool.renderResult(
     {
       content: [{ type: "text", text: CANCELLED_MESSAGE }],
-      details: { questions, answers: [], cancelled: true } satisfies QuestionnaireResult,
+      details: { questions, answers: [], cancelled: true, cancelReason: "user" } satisfies QuestionnaireResult,
     },
     {},
     fakeTheme(),
     {},
   ) as { text: string };
   expect(cancelled.text).toBe("Cancelled");
+
+  const aborted = tool.renderResult(
+    {
+      content: [{ type: "text", text: CANCELLED_MESSAGE }],
+      details: { questions, answers: [], cancelled: true, cancelReason: "aborted" } satisfies QuestionnaireResult,
+    },
+    {},
+    fakeTheme(),
+    {},
+  ) as { text: string };
+  expect(aborted.text).toBe("Cancelled (aborted)");
 });
 
 test("renderResult falls back to the plain content text without details", () => {
