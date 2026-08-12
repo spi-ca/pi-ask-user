@@ -11,7 +11,7 @@
 | 슬래시 명령 | 없음 | 도구 하나만 등록합니다 |
 | 도구 인수 | 있음 | [`usage.md`](usage.md)의 질문·옵션 필드 |
 
-질문 표시 방식은 호출마다 `multiSelect`와 `allowOther`로 결정합니다. 전역 기본값을 바꾸는 설정은 없습니다.
+질문 표시 방식은 호출마다 `multiSelect`, `allowOther`, `optional`, `requireReview`, 선택 범위와 자유 입력 관련 필드로 결정합니다. 전역 기본값을 바꾸는 설정은 없습니다.
 
 ## presence 이벤트
 
@@ -68,7 +68,7 @@ remove는 표시·attention 데이터를 담지 않습니다. 열린 질문 수�
 
 ## 개인정보 범위
 
-presence payload에는 고정 label(`Pi needs your input`), 상태, 개수, 세션 ID, 순서 필드만 담습니다. 질문 `prompt`, 옵션 `label`·`value`·`description`, 사용자 자유 입력, 답변 내용은 어떤 형태로도 전송하지 않습니다. 자동 검증에 이를 확인하는 canary 테스트가 있습니다.
+presence payload에는 고정 source label(`Pi needs your input`), 상태, 개수, 세션 ID, 순서 필드만 담습니다. 질문 `prompt`, 옵션 `label`·`value`·`description`, skip 상태, 필터 텍스트, 사용자 자유 입력, 선택 항목과 답변 내용은 어떤 형태로도 전송하지 않습니다. 자동 검증의 canary 테스트는 고정 source label만 나타나는지 확인합니다.
 
 ## 실패 처리
 
