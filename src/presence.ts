@@ -1,7 +1,7 @@
 // Optional, process-local presence producer.
 //
 // Publishes `pi-presence:update:v1` / `pi-presence:remove:v1` on the in-process
-// event bus so an installed consumer such as `pi-cmux-presence` can surface a
+// event bus so an installed protocol-compatible consumer can surface a
 // "Pi needs your input" state. Presence is observer output only: every emit is
 // best-effort and can never fail or delay the questionnaire itself.
 
@@ -11,13 +11,23 @@ export const PRESENCE_UPDATE_EVENT = "pi-presence:update:v1";
 export const PRESENCE_REMOVE_EVENT = "pi-presence:remove:v1";
 export const PRESENCE_READY_EVENT = "pi-presence:ready:v1";
 export const PRESENCE_REMOVE_CAPABILITY = "presence-remove-v1";
-export const PRESENCE_CONSUMER_ID = "pi-cmux-presence";
 export const PRESENCE_SOURCE_ID = "ask-user";
 export const PRESENCE_SOURCE_LABEL = "Pi needs your input";
 export const MAX_PRESENCE_TEXT = 96;
+export const MAX_PRESENCE_CAPABILITIES = 16;
 
 export interface PresenceRequestToken {
   epoch: number;
+}
+
+/** Canonical v1 ready DTO, copied from untrusted event-bus input. */
+export interface PresenceReadyAdvertisement {
+  readonly version: 1;
+  readonly sessionId: string;
+  readonly consumer?: {
+    readonly id: string;
+    readonly capabilities: readonly string[];
+  };
 }
 
 /**
@@ -46,10 +56,107 @@ export function safePresenceText(value: unknown): value is string {
   return true;
 }
 
+/** Canonical v1 plain objects permit the ordinary and null prototypes. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+
+/** Copy only own data fields before inspecting their values again. */
+function snapshotOwnDataFields(
+  value: unknown,
+  allowed: readonly string[],
+  required: readonly string[],
+): Readonly<Record<string, unknown>> | null {
+  if (!isPlainObject(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  if (
+    !keys.every((key) => typeof key === "string" && allowed.includes(key)) ||
+    !required.every((key) => keys.includes(key))
+  ) {
+    return null;
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (typeof key !== "string") return null;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return Object.freeze(snapshot);
+}
+
+/** Copy the canonical bounded dense list without indexed reads or deduplication. */
+function snapshotCapabilities(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    !lengthDescriptor ||
+    !("value" in lengthDescriptor) ||
+    typeof lengthDescriptor.value !== "number" ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0 ||
+    lengthDescriptor.value > MAX_PRESENCE_CAPABILITIES
+  ) {
+    return null;
+  }
+
+  const length = lengthDescriptor.value;
+  if (
+    keys.length !== length + 1 ||
+    !keys.every(
+      (key) => key === "length" || (typeof key === "string" && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < length),
+    )
+  ) {
+    return null;
+  }
+
+  const capabilities: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || !safePresenceText(descriptor.value)) return null;
+    capabilities.push(descriptor.value);
+  }
+  return Object.freeze(capabilities);
+}
+
+/**
+ * Total parser for canonical v1 ready traffic. The return value is a frozen,
+ * owned DTO, so subsequent Proxy traps or mutation cannot change its meaning.
+ */
+export function parsePresenceReady(payload: unknown): PresenceReadyAdvertisement | null {
+  try {
+    const root = snapshotOwnDataFields(payload, ["version", "sessionId", "consumer"], ["version", "sessionId"]);
+    if (!root || root.version !== 1 || !safePresenceText(root.sessionId)) return null;
+    if (!Object.hasOwn(root, "consumer")) return Object.freeze({ version: 1, sessionId: root.sessionId });
+
+    const consumer = snapshotOwnDataFields(root.consumer, ["id", "capabilities"], ["id", "capabilities"]);
+    if (!consumer || !safePresenceText(consumer.id)) return null;
+    const capabilities = snapshotCapabilities(consumer.capabilities);
+    if (!capabilities) return null;
+    return Object.freeze({
+      version: 1,
+      sessionId: root.sessionId,
+      consumer: Object.freeze({ id: consumer.id, capabilities }),
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Optional, process-local presence producer. Questionnaire authority stays in the tool. */
 export class AskUserPresence {
   private sessionId: string | null = null;
   private advertisedSessionId: string | null = null;
+  private discoveryPayload: object | null = null;
+  private selfDeliveryPayload: object | null = null;
+  private discoveryInFlight = false;
+  private handlingReady = false;
   private generation = 0;
   private lastGeneration = 0;
   private sequence = 0;
@@ -60,44 +167,50 @@ export class AskUserPresence {
 
   constructor(private readonly pi: ExtensionAPI) {}
 
-  /** Record a consumer advertisement. Only exact remove-capable consumers enable output. */
+  /** Process canonical consumer advertisements and consumer-less replay requests. */
   handleReady(payload: unknown): void {
+    // The producer receives its own discovery event on buses that broadcast to
+    // every listener. Suppress that exact object only until emit returns; a later
+    // re-emission of it is a valid request to replay retained waiting state.
+    if (payload === this.selfDeliveryPayload || this.handlingReady) return;
+
+    this.handlingReady = true;
     try {
-      if (!payload || typeof payload !== "object") return;
-      const ready = payload as {
-        version?: unknown;
-        sessionId?: unknown;
-        consumer?: unknown;
-      };
-      if (ready.version !== 1 || !safePresenceText(ready.sessionId)) return;
-      if (!ready.consumer || typeof ready.consumer !== "object") return;
-      const consumer = ready.consumer as { id?: unknown; capabilities?: unknown };
-      if (
-        consumer.id !== PRESENCE_CONSUMER_ID ||
-        !Array.isArray(consumer.capabilities) ||
-        !consumer.capabilities.includes(PRESENCE_REMOVE_CAPABILITY)
-      ) {
+      const ready = parsePresenceReady(payload);
+      if (!ready || (this.sessionId !== null && ready.sessionId !== this.sessionId)) return;
+
+      if (!ready.consumer) {
+        // Advertisements are passive. A separate consumer-less request is the
+        // canonical replay trigger; the guard bounds synchronous re-emission to
+        // one fresh update for this incoming request.
+        if (ready.sessionId === this.sessionId && this.pendingRequests > 0) this.publishWaiting("none");
         return;
       }
 
+      if (!ready.consumer.capabilities.includes(PRESENCE_REMOVE_CAPABILITY)) return;
       this.advertisedSessionId = ready.sessionId;
       if (ready.sessionId !== this.sessionId) return;
       this.removalSupported = true;
-      if (this.pendingRequests > 0) this.publishWaiting("none");
     } catch {
       // Event-bus payloads are advisory and must never interrupt the questionnaire.
+    } finally {
+      this.handlingReady = false;
     }
   }
 
   startSession(ctx: ExtensionContext): void {
     const sessionId = this.readSessionId(ctx);
     this.resetSession(sessionId);
+    this.requestDiscovery();
   }
 
   stopSession(): void {
     this.withdraw();
     this.epoch += 1;
     this.sessionId = null;
+    this.discoveryPayload = null;
+    this.selfDeliveryPayload = null;
+    this.discoveryInFlight = false;
     this.removalSupported = false;
     this.pendingRequests = 0;
   }
@@ -108,6 +221,9 @@ export class AskUserPresence {
     if (sessionId !== this.sessionId) {
       this.withdraw();
       this.resetSession(sessionId);
+      // Discover before incrementing so a synchronous consumer response can
+      // enable this request's normal first (`info`) waiting update.
+      this.requestDiscovery();
     }
 
     const token = { epoch: this.epoch };
@@ -146,7 +262,26 @@ export class AskUserPresence {
     this.sequence = 0;
     this.pendingRequests = 0;
     this.published = false;
+    this.discoveryPayload = null;
+    this.selfDeliveryPayload = null;
+    this.discoveryInFlight = false;
+    if (sessionId !== this.advertisedSessionId) this.advertisedSessionId = null;
     this.removalSupported = sessionId !== null && sessionId === this.advertisedSessionId;
+  }
+
+  /** Ask consumers to advertise once per valid session, without impersonating one. */
+  private requestDiscovery(): void {
+    if (!this.sessionId || this.discoveryPayload || this.discoveryInFlight) return;
+    const discovery = Object.freeze({ version: 1 as const, sessionId: this.sessionId });
+    this.discoveryPayload = discovery;
+    this.selfDeliveryPayload = discovery;
+    this.discoveryInFlight = true;
+    try {
+      this.emit(PRESENCE_READY_EVENT, discovery);
+    } finally {
+      this.selfDeliveryPayload = null;
+      this.discoveryInFlight = false;
+    }
   }
 
   private nextSequence(): number {
