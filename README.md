@@ -12,7 +12,7 @@ Pi TUI에서 사용자에게 선택형 질문을 하고 구조화된 답변을 �
 - **긴 목록 탐색** — 화면 높이에 맞는 옵션 창, `↑ N more`/`↓ N more` 표시, `/` 필터, 숫자 바로 선택을 제공합니다.
 - **구조화된 결과** — 도구 결과의 `details`에 정규화된 질문, 답변 종류(`single`/`multi`/`custom`/`skipped`), 취소 사유를 담아 반환합니다. 텍스트 결과에는 모델이 사용할 기계값도 표시합니다.
 - **안전한 표시** — 모델이 제공한 표시 문자열과 라이브로 보이는 필터·자유 입력에서 제어·bidi 문자를 제거하고 길이를 제한한 뒤 렌더링합니다.
-- **선택적 presence** — 질문이 열려 있는 동안 process-local `pi-presence:update:v1`을 발행합니다. `pi-cmux-presence`처럼 remove 기능을 광고한 소비자가 같은 프로세스에 있을 때만 동작하며, 질문 내용은 전송하지 않습니다.
+- **선택적 presence** — 질문이 열려 있는 동안 process-local `pi-presence:update:v1`을 발행합니다. `presence-remove-v1` 기능을 광고하고 consumer-less `ready` 요청으로 상태 replay를 받는 프로토콜 호환 소비자가 같은 프로세스에 있을 때만 동작합니다. `pi-cmux-presence`와 Herdr가 예시이며, 질문 내용은 전송하지 않습니다.
 
 ## 설치
 
@@ -143,7 +143,7 @@ bun run ci
 bun pm pack --dry-run
 ```
 
-`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. 테스트는 실제 `pi-tui` 편집기와 fake TUI/theme으로 키 입력부터 렌더 출력까지 확인하지만, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence` 연동은 검증하지 않습니다.
+`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. 테스트는 실제 `pi-tui` 편집기와 fake TUI/theme으로 키 입력부터 렌더 출력까지 확인하지만, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence`·Herdr 등 presence 소비자 연동은 검증하지 않습니다.
 
 ## 라이선스
 

@@ -6,8 +6,8 @@
  * answers, and returns structured answers to the agent.
  *
  * The extension adds no slash commands and no background work. It optionally
- * emits process-local presence events so a consumer such as `pi-cmux-presence`
- * can show a "waiting for input" state while a question is open.
+ * emits process-local presence events so a protocol-compatible consumer can
+ * show a "waiting for input" state while a question is open.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
