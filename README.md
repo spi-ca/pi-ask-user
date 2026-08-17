@@ -143,7 +143,7 @@ bun run ci
 bun pm pack --dry-run
 ```
 
-`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. 테스트는 실제 `pi-tui` 편집기와 fake TUI/theme으로 키 입력부터 렌더 출력까지 확인하지만, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence`·Herdr 등 presence 소비자 연동은 검증하지 않습니다.
+`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 외부 구현을 import하지 않는 고정 V1 consumer profile로 capability 없는 cmux-style 소비자와 remove capability를 광고하는 Herdr-style 소비자의 consumer-first·producer-first/replay, 엄격한 privacy-safe update/remove, 질문 완료 뒤 remove를 결정론적으로 확인합니다. 이는 프로토콜 계약 검증이며, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence`·Herdr, cmux 서버·socket·CLI·polling 연동은 검증하지 않습니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
 
 ## 라이선스
 

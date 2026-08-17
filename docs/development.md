@@ -38,7 +38,7 @@ test/component.test.ts  — 실제 pi-tui 편집기와 fake TUI/theme으로 키 
 test/presence.test.ts   — 게이트 조건, payload 형식, 순서 필드, 실패 격리, 개인정보 canary 테스트
 test/tool.test.ts       — 오류 결과, 결과 텍스트, 호출 라벨 포매팅 테스트
 test/entrypoint.test.ts — 등록 표면, 비대화형 경로, 완료·취소·abort 경로, 렌더러 테스트
-test/helpers/           — fake theme·fake TUI와 정규화 기본값을 반영하는 질문 factory(`question.ts`)
+test/helpers/           — fake theme·fake TUI, 정규화 기본값 질문 factory(`question.ts`), 외부 구현에 의존하지 않는 canonical presence 소비자 profile fixture
 docs/                   — 주제별 문서
 ```
 
@@ -71,7 +71,13 @@ docs/                   — 주제별 문서
 
 `bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, typebox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, presence 게이트·payload·순서 필드·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다.
 
-이 검증은 fake TUI와 fake theme까지만 다룹니다. 실제 터미널 렌더링, 실제 테마 색상, 실행 중인 `pi-cmux-presence`와의 연동, cmux 서버 동작은 검증하지 않습니다. 변경 후 실제 환경에서 확인할 항목은 좁은 터미널에서의 줄바꿈, 편집기 커서 표시, presence 소비자가 있을 때의 알림 동작입니다.
+### 결정론적 호환성 근거
+
+`test/helpers/presence-consumer.ts`의 canonical V1 consumer profile은 외부 저장소를 import하거나 실행하지 않는 로컬 fixture입니다. capability가 없는 일반 cmux-style profile과 `presence-remove-v1`을 광고하는 Herdr-style profile을 각각 consumer-first·producer-first 발견/광고/replay 흐름에 넣습니다. 두 profile 모두 exact V1 update/remove shape, 개인정보 필드 부재, 그리고 실제 질문 완료 뒤 remove가 한 번 발행되는지를 검증합니다. 이는 producer가 V1 계약을 지키는지에 관한 반복 가능하고 결정론적인 근거이며, 소비자 구현의 동작을 대체하지는 않습니다.
+
+### 라이브 연동 범위
+
+이 검증은 fake TUI와 fake theme 및 위의 로컬 protocol fixture까지만 다룹니다. 실제 터미널 렌더링, 실제 테마 색상, 실행 중인 `pi-cmux-presence`·Herdr와의 연동, cmux 서버·socket·CLI·polling 동작은 검증하거나 구현하지 않습니다. 변경 후 실제 환경에서 확인할 항목은 좁은 터미널에서의 줄바꿈, 편집기 커서 표시, 설치된 presence 소비자가 있을 때의 알림 동작입니다.
 
 ## 관련 문서
 

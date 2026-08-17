@@ -10,6 +10,13 @@ import {
 import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
+import {
+  CANONICAL_CONSUMER_PROFILES,
+  isPrivacySafePresencePayload,
+  isStrictRemoval,
+  isStrictWaitingUpdate,
+  readyAdvertisement,
+} from "./helpers/presence-consumer.ts";
 import { makeQuestion } from "./helpers/question.ts";
 
 type RegisteredTool = {
@@ -352,6 +359,26 @@ for (const [name, script, abort] of [
       counts: { active: 1, total: 1 },
       attention: "info",
     });
+  });
+}
+
+for (const profile of CANONICAL_CONSUMER_PROFILES) {
+  test(`${profile.name} receives one strict private-safe removal after question resolution`, async () => {
+    const registration = register();
+    const ctx = tuiContext(["\r"]);
+    registration.lifecycleListeners.get("session_start")?.({}, ctx);
+    registration.eventListeners.get(PRESENCE_READY_EVENT)?.(readyAdvertisement(profile, "s1"));
+
+    const result = await registration.tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, ctx);
+    expect((result.details as QuestionnaireResult).cancelled).toBe(false);
+
+    const output = presenceEvents(registration);
+    expect(output.map(({ event }) => event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
+    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
+    expect(isStrictRemoval(output[1]?.payload)).toBe(true);
+    for (const { payload } of output) expect(isPrivacySafePresencePayload(payload)).toBe(true);
+    expect(JSON.stringify(output)).not.toContain("Pick one");
+    expect(JSON.stringify(output)).not.toContain("Korean");
   });
 }
 
