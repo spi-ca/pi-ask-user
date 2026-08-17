@@ -73,7 +73,7 @@ docs/                   — 주제별 문서
 
 ### 결정론적 호환성 근거
 
-`test/helpers/presence-consumer.ts`의 canonical V1 consumer profile은 외부 저장소를 import하거나 실행하지 않는 로컬 fixture입니다. capability가 없는 일반 cmux-style profile과 `presence-remove-v1`을 광고하는 Herdr-style profile을 각각 consumer-first·producer-first 발견/광고/replay 흐름에 넣습니다. 두 profile 모두 exact V1 update/remove shape, 개인정보 필드 부재, 그리고 실제 질문 완료 뒤 remove가 한 번 발행되는지를 검증합니다. 이는 producer가 V1 계약을 지키는지에 관한 반복 가능하고 결정론적인 근거이며, 소비자 구현의 동작을 대체하지는 않습니다.
+`test/helpers/presence-consumer.ts`의 canonical V1 consumer profile은 외부 저장소를 import하거나 실행하지 않는 로컬 fixture입니다. 현재 `pi-cmux-presence`와 `pi-herdr-presence`의 ready ID·capability 광고를 그대로 고정하고, 각각 consumer-first와 요청을 먼저 시작한 producer-first 발견/광고/replay 흐름에 넣습니다. 두 profile 모두 exact V1 update/remove shape, 기대한 세션 ID, 모든 설문 canary 문자열의 부재, 그리고 실제 질문 완료 뒤 remove가 한 번 발행되는지를 검증합니다. 이는 producer가 V1 계약을 지키는지에 관한 반복 가능하고 결정론적인 근거이며, 소비자 구현의 동작을 대체하지는 않습니다.
 
 ### 라이브 연동 범위
 

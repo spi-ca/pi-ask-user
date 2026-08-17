@@ -7,18 +7,23 @@ export interface CanonicalConsumerProfile {
   readonly capabilities: readonly string[];
 }
 
-/** Generic cmux-style V1 consumer: remove support is intentionally absent. */
+/** Current `pi-cmux-presence` V1 ready advertisement, copied as a local fixture. */
 export const CMUX_V1_CONSUMER: CanonicalConsumerProfile = Object.freeze({
-  name: "cmux-style V1",
+  name: "pi-cmux-presence V1",
   id: "pi-cmux-presence",
-  capabilities: Object.freeze([]),
+  capabilities: Object.freeze(["cmux-status", "cmux-progress", "cmux-attention", "presence-remove-v1"]),
 });
 
-/** Herdr advertises its optional V1 removal support. */
+/** Current `pi-herdr-presence` V1 ready advertisement, copied as a local fixture. */
 export const HERDR_V1_CONSUMER: CanonicalConsumerProfile = Object.freeze({
-  name: "Herdr-style V1",
-  id: "herdr",
-  capabilities: Object.freeze(["presence-remove-v1"]),
+  name: "pi-herdr-presence V1",
+  id: "pi-herdr-presence",
+  capabilities: Object.freeze([
+    "presence-remove-v1",
+    "presence-summary-v1",
+    "herdr-pane-report-agent-v1",
+    "herdr-pane-report-metadata-v1",
+  ]),
 });
 
 export const CANONICAL_CONSUMER_PROFILES = Object.freeze([CMUX_V1_CONSUMER, HERDR_V1_CONSUMER]);
@@ -120,10 +125,21 @@ export function isStrictRemoval(payload: unknown): boolean {
   return hasExactDataKeys(payload.source, ["id"]) && payload.source.id === "ask-user";
 }
 
-/** The strict schemas above leave no room for question or answer fields. */
-export function isPrivacySafePresencePayload(payload: unknown): boolean {
+/** Unique questionnaire inputs that must never appear in a presence payload. */
+export const QUESTIONNAIRE_SENTINELS = Object.freeze([
+  "question-id-sentinel-8d2e",
+  "question-label-sentinel-8d2e",
+  "question-prompt-sentinel-8d2e",
+  "option-value-sentinel-8d2e",
+  "option-label-sentinel-8d2e",
+  "option-description-sentinel-8d2e",
+]);
+
+/** Every serialized payload field must preserve its session ID and omit questionnaire data. */
+export function isPrivacySafePresencePayload(payload: unknown, expectedSessionId: string): boolean {
+  if (!payload || typeof payload !== "object" || (payload as { sessionId?: unknown }).sessionId !== expectedSessionId) {
+    return false;
+  }
   const serialized = JSON.stringify(payload);
-  return !["prompt", "options", "answers", "selections", "defaultValues", "filter", "custom", "value"].some((field) =>
-    serialized.includes(`"${field}"`),
-  );
+  return QUESTIONNAIRE_SENTINELS.every((sentinel) => !serialized.includes(sentinel));
 }

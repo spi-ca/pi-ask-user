@@ -15,6 +15,7 @@ import {
   isPrivacySafePresencePayload,
   isStrictRemoval,
   isStrictWaitingUpdate,
+  QUESTIONNAIRE_SENTINELS,
   readyAdvertisement,
 } from "./helpers/presence-consumer.ts";
 import { makeQuestion } from "./helpers/question.ts";
@@ -168,6 +169,23 @@ const SINGLE_QUESTION = {
       options: [
         { value: "ko", label: "Korean" },
         { value: "en", label: "English" },
+      ],
+    },
+  ],
+};
+
+const PRIVACY_SENTINEL_QUESTION = {
+  questions: [
+    {
+      id: QUESTIONNAIRE_SENTINELS[0],
+      label: QUESTIONNAIRE_SENTINELS[1],
+      prompt: QUESTIONNAIRE_SENTINELS[2],
+      options: [
+        {
+          value: QUESTIONNAIRE_SENTINELS[3],
+          label: QUESTIONNAIRE_SENTINELS[4],
+          description: QUESTIONNAIRE_SENTINELS[5],
+        },
       ],
     },
   ],
@@ -369,16 +387,19 @@ for (const profile of CANONICAL_CONSUMER_PROFILES) {
     registration.lifecycleListeners.get("session_start")?.({}, ctx);
     registration.eventListeners.get(PRESENCE_READY_EVENT)?.(readyAdvertisement(profile, "s1"));
 
-    const result = await registration.tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, ctx);
+    const result = await registration.tool.execute("call-1", PRIVACY_SENTINEL_QUESTION, undefined, undefined, ctx);
     expect((result.details as QuestionnaireResult).cancelled).toBe(false);
 
     const output = presenceEvents(registration);
     expect(output.map(({ event }) => event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
     expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
     expect(isStrictRemoval(output[1]?.payload)).toBe(true);
-    for (const { payload } of output) expect(isPrivacySafePresencePayload(payload)).toBe(true);
-    expect(JSON.stringify(output)).not.toContain("Pick one");
-    expect(JSON.stringify(output)).not.toContain("Korean");
+    for (const { payload } of registration.emitted) {
+      expect(isPrivacySafePresencePayload(payload, "s1")).toBe(true);
+      expect((payload as { sessionId?: unknown }).sessionId).toBe("s1");
+      const serializedPayload = JSON.stringify(payload);
+      for (const sentinel of QUESTIONNAIRE_SENTINELS) expect(serializedPayload).not.toContain(sentinel);
+    }
   });
 }
 

@@ -81,7 +81,7 @@ remove의 top-level own field는 정확히 `version`, `sessionId`, `generation`,
 
 ## 개인정보 범위
 
-presence payload에는 고정 source label(`Pi needs your input`), 상태, 개수, 세션 ID, 순서 필드만 담습니다. 질문 `prompt`, 옵션 `label`·`value`·`description`, skip 상태, 필터 텍스트, 사용자 자유 입력, 선택 항목과 답변 내용은 어떤 형태로도 전송하지 않습니다. 자동 검증의 canary 테스트는 고정 source label만 나타나는지 확인합니다.
+presence payload에는 고정 source label(`Pi needs your input`), 상태, 개수, 세션 ID, 순서 필드만 담습니다. 질문 `prompt`, 옵션 `label`·`value`·`description`, skip 상태, 필터 텍스트, 사용자 자유 입력, 선택 항목과 답변 내용은 어떤 형태로도 전송하지 않습니다. 자동 검증은 실제 설문 입력의 ID·label·prompt·option value·label·description canary 문자열이 각 직렬화 payload에 없는지와, 발행된 `sessionId`가 기대한 세션 ID와 정확히 같은지를 확인합니다.
 
 ## 실패 처리
 
