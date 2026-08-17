@@ -143,7 +143,7 @@ bun run ci
 bun pm pack --dry-run
 ```
 
-`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 외부 구현을 import하지 않는 고정 V1 consumer profile로 capability 없는 cmux-style 소비자와 remove capability를 광고하는 Herdr-style 소비자의 consumer-first·producer-first/replay, 엄격한 privacy-safe update/remove, 질문 완료 뒤 remove를 결정론적으로 확인합니다. 이는 프로토콜 계약 검증이며, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence`·Herdr, cmux 서버·socket·CLI·polling 연동은 검증하지 않습니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
+`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 외부 구현을 import하지 않는 로컬 고정 V1 consumer fixture로 현재 `pi-cmux-presence`의 ready ID와 capability(`cmux-status`, `cmux-progress`, `cmux-attention`, `presence-remove-v1`), `pi-herdr-presence`의 ready ID와 capability(`presence-remove-v1`, `presence-summary-v1`, `herdr-pane-report-agent-v1`, `herdr-pane-report-metadata-v1`)를 정확히 재현합니다. 각 profile의 consumer-first·producer-first 발견/광고/replay, 엄격한 privacy-safe update/remove, 질문 완료 뒤 remove를 결정론적으로 확인하는 producer 프로토콜 계약 검증만 다루며, 실제 터미널 렌더링과 실행 중인 `pi-cmux-presence`·`pi-herdr-presence`, cmux 서버·socket·CLI·polling 연동은 검증하지 않습니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
 
 ## 라이선스
 
