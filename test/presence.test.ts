@@ -163,7 +163,7 @@ test("session start emits one consumer-less discovery request", () => {
   expect(Reflect.ownKeys(discovery)).toEqual(["version", "sessionId"]);
 });
 
-test("no update or removal is published without a matching consumer advertisement", () => {
+test("no update or removal is published without a valid consumer advertisement", () => {
   const { pi, emitted } = fakePi();
   const presence = new AskUserPresence(pi);
   presence.startSession(fakeCtx("s1"));
@@ -191,6 +191,17 @@ test("a generic Herdr consumer enables a waiting update and withdrawal", () => {
   expect(presenceEvents(emitted)).toHaveLength(2);
   expect(presenceEvents(emitted)[1]!.event).toBe(PRESENCE_REMOVE_EVENT);
   expect(presenceEvents(emitted)[1]!.payload.source).toEqual({ id: PRESENCE_SOURCE_ID });
+});
+
+test("a valid consumer without the optional remove capability enables update and withdrawal", () => {
+  const { pi, emitted } = fakePi();
+  const presence = new AskUserPresence(pi);
+  presence.startSession(fakeCtx("s1"));
+  presence.handleReady(readyPayload("s1", { consumer: { id: "legacy-consumer", capabilities: [] } }));
+
+  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
+
+  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
 });
 
 test("the existing pi-cmux-presence advertisement remains compatible", () => {
@@ -283,7 +294,7 @@ test("strict ready validation rejects huge, sparse, extra, getter, and inherited
   expect(presenceEvents(emitted)).toEqual([]);
 });
 
-test("malformed, missing-capability, and foreign ready payloads are ignored", () => {
+test("malformed and foreign ready payloads are ignored", () => {
   const { pi, emitted } = fakePi();
   const presence = new AskUserPresence(pi);
   presence.startSession(fakeCtx("s1"));
@@ -294,7 +305,6 @@ test("malformed, missing-capability, and foreign ready payloads are ignored", ()
     sessionId: "s1",
     consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
   });
-  presence.handleReady(readyPayload("s1", { consumer: { id: "herdr", capabilities: [] } }));
   presence.handleReady(readyPayload("s1", { consumer: { id: "herdr" } }));
   presence.handleReady(
     readyPayload("s1", { consumer: { id: "bad\nsession", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }),

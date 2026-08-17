@@ -22,7 +22,7 @@
 
 ### 변경
 
-- presence consumer 게이트를 특정 `pi-cmux-presence` ID에서 일반 `presence-remove-v1` 프로토콜 호환 소비자로 넓혔습니다. 세션 시작 시 consumer 없는 `pi-presence:ready:v1` 발견 요청을 한 번 발행하며, 기존 `pi-cmux-presence`와 Herdr 광고를 모두 지원합니다. canonical v1 ready grammar(최대 16 capability, null-prototype object, frozen snapshot)와 consumer-less replay도 따릅니다.
+- presence consumer 게이트를 특정 `pi-cmux-presence` ID에서 일반적인 엄격한 V1 consumer advertisement로 넓혔습니다. `presence-remove-v1`은 선택 capability이므로 이를 광고하지 않는 유효 소비자도 update와 정상 종료 remove를 받습니다. 세션 시작 시 consumer 없는 `pi-presence:ready:v1` 발견 요청을 한 번 발행하며, 기존 `pi-cmux-presence`와 Herdr 광고를 모두 지원합니다. canonical v1 ready grammar(최대 16 capability, null-prototype object, frozen snapshot)와 consumer-less replay도 따릅니다.
 - 단일 질문은 `requireReview`가 없으면 검토 탭을 만들지 않습니다.
 - 답변 후 다음 질문이 아니라 다음 **미답변** 질문으로 이동합니다.
 - 키 바인딩 관리자가 있으면 그 결과를 그대로 따릅니다. 확인 키를 다른 키로 옮기면 `Enter`는 더 이상 선택하지 않습니다.

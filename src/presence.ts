@@ -162,7 +162,7 @@ export class AskUserPresence {
   private sequence = 0;
   private pendingRequests = 0;
   private epoch = 0;
-  private removalSupported = false;
+  private consumerAvailable = false;
   private published = false;
 
   constructor(private readonly pi: ExtensionAPI) {}
@@ -187,10 +187,13 @@ export class AskUserPresence {
         return;
       }
 
-      if (!ready.consumer.capabilities.includes(PRESENCE_REMOVE_CAPABILITY)) return;
+      // `presence-remove-v1` tells us that a consumer understands removes, but
+      // it is optional. Any strict, matching consumer advertisement enables
+      // retained updates; the normal remove is still emitted when the request
+      // count returns to zero.
       this.advertisedSessionId = ready.sessionId;
       if (ready.sessionId !== this.sessionId) return;
-      this.removalSupported = true;
+      this.consumerAvailable = true;
     } catch {
       // Event-bus payloads are advisory and must never interrupt the questionnaire.
     } finally {
@@ -211,7 +214,7 @@ export class AskUserPresence {
     this.discoveryPayload = null;
     this.selfDeliveryPayload = null;
     this.discoveryInFlight = false;
-    this.removalSupported = false;
+    this.consumerAvailable = false;
     this.pendingRequests = 0;
   }
 
@@ -228,7 +231,7 @@ export class AskUserPresence {
 
     const token = { epoch: this.epoch };
     this.pendingRequests += 1;
-    if (this.removalSupported) {
+    if (this.consumerAvailable) {
       this.publishWaiting(this.pendingRequests === 1 ? "info" : "none");
     }
     return token;
@@ -240,7 +243,7 @@ export class AskUserPresence {
     this.pendingRequests -= 1;
     if (this.pendingRequests === 0) {
       this.withdraw();
-    } else if (this.removalSupported) {
+    } else if (this.consumerAvailable) {
       this.publishWaiting("none");
     }
   }
@@ -266,7 +269,7 @@ export class AskUserPresence {
     this.selfDeliveryPayload = null;
     this.discoveryInFlight = false;
     if (sessionId !== this.advertisedSessionId) this.advertisedSessionId = null;
-    this.removalSupported = sessionId !== null && sessionId === this.advertisedSessionId;
+    this.consumerAvailable = sessionId !== null && sessionId === this.advertisedSessionId;
   }
 
   /** Ask consumers to advertise once per valid session, without impersonating one. */
@@ -290,7 +293,7 @@ export class AskUserPresence {
   }
 
   private publishWaiting(attention: "info" | "none"): void {
-    if (!this.sessionId || !this.removalSupported || this.pendingRequests === 0) return;
+    if (!this.sessionId || !this.consumerAvailable || this.pendingRequests === 0) return;
     this.published = true;
     this.emit(PRESENCE_UPDATE_EVENT, {
       version: 1,
