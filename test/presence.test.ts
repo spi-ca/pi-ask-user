@@ -12,6 +12,14 @@ import {
   parsePresenceReady,
   safePresenceText,
 } from "../src/presence.ts";
+import {
+  CANONICAL_CONSUMER_PROFILES,
+  isPrivacySafePresencePayload,
+  isStrictRemoval,
+  isStrictWaitingUpdate,
+  readyAdvertisement,
+  readyReplayRequest,
+} from "./helpers/presence-consumer.ts";
 
 interface PresenceEventPayload {
   version?: number;
@@ -171,6 +179,65 @@ test("no update or removal is published without a valid consumer advertisement",
   presence.finishRequest(token);
   expect(presenceEvents(emitted)).toEqual([]);
 });
+
+for (const profile of CANONICAL_CONSUMER_PROFILES) {
+  test(`${profile.name} consumer-first ready and replay lifecycle accepts strict private-safe V1 payloads`, () => {
+    const { pi, emitted } = fakePi();
+    const presence = new AskUserPresence(pi);
+
+    presence.handleReady(readyAdvertisement(profile, "s1"));
+    presence.startSession(fakeCtx("s1"));
+    const token = presence.beginRequest(fakeCtx("s1"));
+    presence.handleReady(readyReplayRequest("s1"));
+    presence.finishRequest(token);
+
+    const output = presenceEvents(emitted);
+    expect(profile.id).toBe(profile.name === "pi-cmux-presence V1" ? "pi-cmux-presence" : "pi-herdr-presence");
+    expect(profile.capabilities).toEqual(
+      profile.id === "pi-cmux-presence"
+        ? ["cmux-status", "cmux-progress", "cmux-attention", PRESENCE_REMOVE_CAPABILITY]
+        : [
+            PRESENCE_REMOVE_CAPABILITY,
+            "presence-summary-v1",
+            "herdr-pane-report-agent-v1",
+            "herdr-pane-report-metadata-v1",
+          ],
+    );
+    expect(output.map((entry) => entry.event)).toEqual([
+      PRESENCE_UPDATE_EVENT,
+      PRESENCE_UPDATE_EVENT,
+      PRESENCE_REMOVE_EVENT,
+    ]);
+    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
+    expect(isStrictWaitingUpdate(output[1]?.payload)).toBe(true);
+    expect(isStrictRemoval(output[2]?.payload)).toBe(true);
+    expect(output[0]?.payload.attention).toBe("info");
+    expect(output[1]?.payload.attention).toBe("none");
+    for (const entry of output) expect(isPrivacySafePresencePayload(entry.payload, "s1")).toBe(true);
+  });
+
+  test(`${profile.name} producer-first request replays only after a late ready advertisement`, () => {
+    const { pi, emitted } = fakePi();
+    const presence = new AskUserPresence(pi);
+
+    presence.startSession(fakeCtx("s1"));
+    const token = presence.beginRequest(fakeCtx("s1"));
+    expect(presenceEvents(emitted)).toEqual([]);
+
+    presence.handleReady(readyAdvertisement(profile, "s1"));
+    expect(presenceEvents(emitted)).toEqual([]);
+    presence.handleReady(readyReplayRequest("s1"));
+    presence.finishRequest(token);
+
+    expect(discoveryEvents(emitted).map((entry) => entry.payload)).toEqual([{ version: 1, sessionId: "s1" }]);
+    const output = presenceEvents(emitted);
+    expect(output.map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
+    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
+    expect(isStrictRemoval(output[1]?.payload)).toBe(true);
+    expect(output[0]?.payload.attention).toBe("none");
+    for (const entry of output) expect(isPrivacySafePresencePayload(entry.payload, "s1")).toBe(true);
+  });
+}
 
 test("a generic Herdr consumer enables a waiting update and withdrawal", () => {
   const { pi, emitted } = fakePi();
