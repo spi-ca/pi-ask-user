@@ -154,28 +154,28 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
         component?.cancel("aborted");
       };
 
-      const questionnaire = ctx.ui.custom<QuestionnaireResult>((tui, theme, keybindings, done) => {
-        const mounted = createQuestionnaireComponent({
-          questions,
-          tui,
-          theme,
-          keybindings,
-          done: (result) => {
-            component = null;
-            done(result);
-          },
-        });
-        component = mounted;
-        // An abort that arrived before mounting settles the component now; the
-        // component itself is still returned so the host can dispose it.
-        if (cancelRequested) mounted.cancel("aborted");
-        return mounted;
-      });
-
-      if (signal?.aborted) cancel();
-      else signal?.addEventListener("abort", cancel, { once: true });
-
       try {
+        const questionnaire = ctx.ui.custom<QuestionnaireResult>((tui, theme, keybindings, done) => {
+          const mounted = createQuestionnaireComponent({
+            questions,
+            tui,
+            theme,
+            keybindings,
+            done: (result) => {
+              component = null;
+              done(result);
+            },
+          });
+          component = mounted;
+          // An abort that arrived before mounting settles the component now; the
+          // component itself is still returned so the host can dispose it.
+          if (cancelRequested) mounted.cancel("aborted");
+          return mounted;
+        });
+
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+
         const result = await questionnaire;
         if (result.cancelled) {
           return {
@@ -189,9 +189,12 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
           details: result,
         };
       } finally {
-        signal?.removeEventListener("abort", cancel);
         component = null;
-        presence.finishRequest(presenceToken);
+        try {
+          signal?.removeEventListener("abort", cancel);
+        } finally {
+          presence.finishRequest(presenceToken);
+        }
       }
     },
 

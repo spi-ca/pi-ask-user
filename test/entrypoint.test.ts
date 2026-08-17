@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import askUser from "../index.ts";
-import { PRESENCE_READY_EVENT } from "../src/presence.ts";
+import {
+  PRESENCE_READY_EVENT,
+  PRESENCE_REMOVE_CAPABILITY,
+  PRESENCE_REMOVE_EVENT,
+  PRESENCE_UPDATE_EVENT,
+} from "../src/presence.ts";
 import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
@@ -11,7 +16,7 @@ type RegisteredTool = {
   name: string;
   label: string;
   description: string;
-  parameters: any;
+  parameters: unknown;
   executionMode: string;
   execute: (
     toolCallId: string,
@@ -29,25 +34,42 @@ type RegisteredTool = {
   ) => { text?: string };
 };
 
+type EventListener = (payload: unknown) => void;
+type LifecycleListener = (event: unknown, ctx: ExtensionContext) => void;
+type CustomComponent = { focused: boolean; handleInput(data: string): void };
+type CustomFactory<T> = (
+  tui: unknown,
+  theme: unknown,
+  keybindings: unknown,
+  done: (result: T) => void,
+) => CustomComponent;
+
 function register() {
   const hooks: string[] = [];
   const events: string[] = [];
+  const emitted: { event: string; payload: unknown }[] = [];
+  const eventListeners = new Map<string, EventListener>();
+  const lifecycleListeners = new Map<string, LifecycleListener>();
   const tools: RegisteredTool[] = [];
   askUser({
-    on(name: string) {
+    on(name: string, listener: LifecycleListener) {
       hooks.push(name);
+      lifecycleListeners.set(name, listener);
     },
     events: {
-      on(name: string) {
+      on(name: string, listener: EventListener) {
         events.push(name);
+        eventListeners.set(name, listener);
       },
-      emit() {},
+      emit(event: string, payload: unknown) {
+        emitted.push({ event, payload });
+      },
     },
     registerTool(tool: RegisteredTool) {
       tools.push(tool);
     },
   } as unknown as ExtensionAPI);
-  return { hooks, events, tool: tools[0]!, tools };
+  return { hooks, events, emitted, eventListeners, lifecycleListeners, tool: tools[0]!, tools };
 }
 
 /**
@@ -61,9 +83,7 @@ function tuiContext(script: string[], sessionId = "s1", deferFactory = false): E
     mode: "tui",
     sessionManager: { getSessionId: () => sessionId },
     ui: {
-      custom<T>(
-        factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => any,
-      ): Promise<T> {
+      custom<T>(factory: CustomFactory<T>): Promise<T> {
         let settle: ((result: T) => void) | undefined;
         const settled = new Promise<T>((resolve) => {
           settle = resolve;
@@ -81,6 +101,55 @@ function tuiContext(script: string[], sessionId = "s1", deferFactory = false): E
       },
     },
   } as unknown as ExtensionContext;
+}
+
+function trackedAbortSignal(): { signal: AbortSignal; listenerCount: () => number } {
+  const listeners = new Set<unknown>();
+  return {
+    signal: {
+      aborted: false,
+      addEventListener(type: string, listener: unknown) {
+        if (type === "abort") listeners.add(listener);
+      },
+      removeEventListener(type: string, listener: unknown) {
+        if (type === "abort") listeners.delete(listener);
+      },
+    } as AbortSignal,
+    listenerCount: () => listeners.size,
+  };
+}
+
+function presenceEvents(registration: ReturnType<typeof register>) {
+  return registration.emitted.filter(({ event }) => event === PRESENCE_UPDATE_EVENT || event === PRESENCE_REMOVE_EVENT);
+}
+
+function activatePresence(registration: ReturnType<typeof register>, ctx: ExtensionContext): void {
+  registration.lifecycleListeners.get("session_start")?.({}, ctx);
+  const discovery = registration.emitted.find(({ event }) => event === PRESENCE_READY_EVENT);
+  expect(discovery?.payload).toEqual({ version: 1, sessionId: "s1" });
+
+  registration.eventListeners.get(PRESENCE_READY_EVENT)?.({
+    version: 1,
+    sessionId: "s1",
+    consumer: { id: "test-consumer", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
+  });
+}
+
+function factoryThrowingContext(): ExtensionContext {
+  return {
+    mode: "tui",
+    sessionManager: { getSessionId: () => "s1" },
+    ui: {
+      custom<T>(factory: CustomFactory<T>): Promise<T> {
+        factory(fakeTui(), fakeTheme(), new Proxy({}, { get: () => throwFactoryError() }), () => undefined);
+        throw new Error("factory unexpectedly returned");
+      },
+    },
+  } as unknown as ExtensionContext;
+}
+
+function throwFactoryError(): never {
+  throw new Error("factory failed");
 }
 
 const SINGLE_QUESTION = {
@@ -202,6 +271,112 @@ test("an abort while the questionnaire is open cancels it", async () => {
   const result = await pending;
   expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
   expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
+});
+
+test("abort listeners are removed after settled success and rejected UI paths", async () => {
+  const { tool } = register();
+  const success = trackedAbortSignal();
+  await tool.execute("call-1", SINGLE_QUESTION, success.signal, undefined, tuiContext(["\u001b[B", "\r"]));
+  expect(success.listenerCount()).toBe(0);
+
+  const rejection = trackedAbortSignal();
+  const rejectedContext = {
+    mode: "tui",
+    sessionManager: { getSessionId: () => "s1" },
+    ui: { custom: () => Promise.reject(new Error("ui.custom rejected")) },
+  } as unknown as ExtensionContext;
+  await expect(tool.execute("call-1", SINGLE_QUESTION, rejection.signal, undefined, rejectedContext)).rejects.toThrow();
+  expect(rejection.listenerCount()).toBe(0);
+});
+
+for (const [name, context] of [
+  [
+    "ui.custom throws synchronously",
+    () =>
+      ({
+        mode: "tui",
+        sessionManager: { getSessionId: () => "s1" },
+        ui: {
+          custom: () => {
+            throw new Error("ui.custom failed");
+          },
+        },
+      }) as unknown as ExtensionContext,
+  ],
+  ["the questionnaire factory throws", factoryThrowingContext],
+  [
+    "ui.custom rejects asynchronously",
+    () =>
+      ({
+        mode: "tui",
+        sessionManager: { getSessionId: () => "s1" },
+        ui: { custom: () => Promise.reject(new Error("ui.custom rejected")) },
+      }) as unknown as ExtensionContext,
+  ],
+] as const) {
+  test(`presence is withdrawn when ${name}`, async () => {
+    const registration = register();
+    const ctx = context();
+    activatePresence(registration, ctx);
+
+    await expect(registration.tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, ctx)).rejects.toThrow();
+    expect(registration.emitted.map(({ event }) => event)).toEqual([
+      PRESENCE_READY_EVENT,
+      PRESENCE_UPDATE_EVENT,
+      PRESENCE_REMOVE_EVENT,
+    ]);
+  });
+}
+
+for (const [name, script, abort] of [
+  ["completes normally", ["\u001b[B", "\r"], false],
+  ["is cancelled by the user", ["\u001b"], false],
+  ["is aborted", [], true],
+] as const) {
+  test(`presence follows the full lifecycle when the questionnaire ${name}`, async () => {
+    const registration = register();
+    const ctx = tuiContext([...script]);
+    const controller = abort ? new AbortController() : undefined;
+    activatePresence(registration, ctx);
+
+    const result = registration.tool.execute("call-1", SINGLE_QUESTION, controller?.signal, undefined, ctx);
+    if (controller) controller.abort();
+    await result;
+
+    expect(registration.emitted.map(({ event }) => event)).toEqual([
+      PRESENCE_READY_EVENT,
+      PRESENCE_UPDATE_EVENT,
+      PRESENCE_REMOVE_EVENT,
+    ]);
+    expect(presenceEvents(registration)[0]!.payload).toMatchObject({
+      counts: { active: 1, total: 1 },
+      attention: "info",
+    });
+  });
+}
+
+test("session shutdown withdraws pending presence without a duplicate removal", async () => {
+  const registration = register();
+  const controller = new AbortController();
+  const ctx = tuiContext([]);
+  activatePresence(registration, ctx);
+
+  const pending = registration.tool.execute("call-1", SINGLE_QUESTION, controller.signal, undefined, ctx);
+  expect(registration.emitted.map(({ event }) => event)).toEqual([PRESENCE_READY_EVENT, PRESENCE_UPDATE_EVENT]);
+
+  registration.lifecycleListeners.get("session_shutdown")?.({} as never, {} as ExtensionContext);
+  expect(registration.emitted.map(({ event }) => event)).toEqual([
+    PRESENCE_READY_EVENT,
+    PRESENCE_UPDATE_EVENT,
+    PRESENCE_REMOVE_EVENT,
+  ]);
+
+  controller.abort();
+  await pending;
+  expect(presenceEvents(registration).map(({ event }) => event)).toEqual([
+    PRESENCE_UPDATE_EVENT,
+    PRESENCE_REMOVE_EVENT,
+  ]);
 });
 
 test("renderCall summarizes the question count and labels", () => {

@@ -53,8 +53,8 @@
 
 - top-level own field는 정확히 `version`, `sessionId`, `generation`, `sequence`, `source`, `state`, `counts`, `attention`입니다.
 - `state`는 항상 `waiting`입니다. 이 패키지는 실행·성공·실패 상태를 보고하지 않습니다.
-- `counts.active`와 `counts.total`은 현재 열려 있는 질문 수입니다.
-- `attention`은 첫 질문에서만 `info`이고, 이후 갱신은 `none`입니다. 알림이 질문 하나마다 반복되지 않게 하기 위한 것입니다.
+- `counts.active`와 `counts.total`은 현재 열려 있는 설문 도구 호출(활성 request) 수입니다. 설문 안의 개별 질문 수가 아닙니다.
+- `attention`은 첫 활성 request에서만 `info`이고, 이후 갱신은 `none`입니다. 알림이 개별 질문마다 반복되지 않게 하기 위한 것입니다.
 - `generation`은 세션마다 증가하며 같은 세션 안에서는 고정입니다. `sequence`는 발행마다 1씩 증가합니다.
 
 ### remove payload
@@ -69,7 +69,7 @@
 }
 ```
 
-remove의 top-level own field는 정확히 `version`, `sessionId`, `generation`, `sequence`, `source`입니다. 표시·attention 데이터를 담지 않습니다. 열린 질문 수가 0이 되거나 세션이 종료될 때 한 번 발행합니다.
+remove의 top-level own field는 정확히 `version`, `sessionId`, `generation`, `sequence`, `source`입니다. 표시·attention 데이터를 담지 않습니다. 활성 설문 도구 호출(request) 수가 0이 되거나 세션이 종료될 때 한 번 발행합니다.
 
 ### 발견, 늦은 광고와 세션 교체
 
