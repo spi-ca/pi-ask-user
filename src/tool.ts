@@ -7,7 +7,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { createQuestionnaireComponent, type QuestionnaireComponent } from "./component.ts";
-import { AskUserPresence, PRESENCE_READY_EVENT } from "./presence.ts";
+import { AskUserPresence } from "./presence.ts";
 import { answerLabels, answerValues, normalizeQuestions, QuestionnaireParams } from "./questions.ts";
 import { answerPrefix } from "./render.ts";
 import { sanitizeDisplayText } from "./sanitize.ts";
@@ -122,7 +122,6 @@ export function callLabels(args: unknown): { count: number; labels: string } {
 
 export function registerAskUserTool(pi: ExtensionAPI): void {
   const presence = new AskUserPresence(pi);
-  pi.events.on(PRESENCE_READY_EVENT, (payload) => presence.handleReady(payload));
   pi.on("session_start", (_event, ctx) => presence.startSession(ctx));
   pi.on("session_shutdown", () => presence.stopSession());
 

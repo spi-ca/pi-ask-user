@@ -1,57 +1,18 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createPresenceProducer, EVENT_NAMES, MAX_INTEGER } from "@pi/presence";
+import { AskUserPresence } from "../src/presence.ts";
 import {
-  AskUserPresence,
-  MAX_PRESENCE_CAPABILITIES,
-  MAX_PRESENCE_TEXT,
-  PRESENCE_READY_EVENT,
-  PRESENCE_REMOVE_CAPABILITY,
-  PRESENCE_REMOVE_EVENT,
-  PRESENCE_SOURCE_ID,
-  PRESENCE_UPDATE_EVENT,
-  parsePresenceReady,
-  safePresenceText,
-} from "../src/presence.ts";
-import {
-  CANONICAL_CONSUMER_PROFILES,
-  isPrivacySafePresencePayload,
-  isStrictRemoval,
-  isStrictWaitingUpdate,
-  readyAdvertisement,
-  readyReplayRequest,
+  attachV2Consumer,
+  createEventBus,
+  QUESTIONNAIRE_SENTINELS,
+  serializedPayloadsArePrivate,
 } from "./helpers/presence-consumer.ts";
 
-interface PresenceEventPayload {
-  version?: number;
-  sessionId?: string;
-  consumer?: unknown;
-  state?: string;
-  attention?: string;
-  source?: { id?: string; label?: string; kind?: string };
-  counts?: { active?: number; completed?: number; failed?: number; total?: number };
-  sequence?: number;
-  generation?: number;
-}
-
-interface Emitted {
-  event: string;
-  payload: PresenceEventPayload;
-}
-
-function fakePi(onEmit?: (event: string, payload: unknown) => void) {
-  const emitted: Emitted[] = [];
-  const pi = {
-    events: {
-      emit(event: string, payload: unknown) {
-        emitted.push({ event, payload: payload as PresenceEventPayload });
-        onEmit?.(event, payload);
-      },
-      on() {},
-    },
-    on() {},
-  } as unknown as ExtensionAPI;
-  return { pi, emitted };
-}
+const cleanups: Array<() => void> = [];
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+});
 
 function fakeCtx(sessionId: string | (() => string)): ExtensionContext {
   return {
@@ -61,572 +22,320 @@ function fakeCtx(sessionId: string | (() => string)): ExtensionContext {
   } as unknown as ExtensionContext;
 }
 
-function readyPayload(sessionId: string, overrides: Record<string, unknown> = {}) {
+function fakePi(bus: ReturnType<typeof createEventBus>): ExtensionAPI {
   return {
-    version: 1,
-    sessionId,
-    consumer: { id: "pi-cmux-presence", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-    ...overrides,
-  };
-}
-
-function presenceEvents(emitted: Emitted[]): Emitted[] {
-  return emitted.filter((entry) => entry.event !== PRESENCE_READY_EVENT);
-}
-
-function discoveryEvents(emitted: Emitted[]): Emitted[] {
-  return emitted.filter((entry) => entry.event === PRESENCE_READY_EVENT);
-}
-
-/** Mirrors a generic consumer: only a JSON-shaped, exact discovery is accepted. */
-function isStrictDiscovery(payload: unknown): payload is { version: 1; sessionId: string } {
-  if (!payload || typeof payload !== "object" || Object.getPrototypeOf(payload) !== Object.prototype) return false;
-  if (
-    Reflect.ownKeys(payload).length !== 2 ||
-    !Reflect.ownKeys(payload).every((key) => key === "version" || key === "sessionId")
-  ) {
-    return false;
-  }
-  for (const key of ["version", "sessionId"] as const) {
-    const descriptor = Object.getOwnPropertyDescriptor(payload, key);
-    if (!descriptor?.enumerable || !("value" in descriptor)) return false;
-  }
-  return (
-    Object.getOwnPropertyDescriptor(payload, "version")!.value === 1 &&
-    typeof Object.getOwnPropertyDescriptor(payload, "sessionId")!.value === "string"
-  );
-}
-
-test("safePresenceText accepts short clean text and rejects unsafe text", () => {
-  expect(safePresenceText("session-1")).toBe(true);
-  expect(safePresenceText("한글 세션")).toBe(true);
-  expect(safePresenceText("")).toBe(false);
-  expect(safePresenceText(42)).toBe(false);
-  expect(safePresenceText("with\nnewline")).toBe(false);
-  expect(safePresenceText("with\u202ebidi")).toBe(false);
-  expect(safePresenceText("a".repeat(MAX_PRESENCE_TEXT))).toBe(true);
-  expect(safePresenceText("a".repeat(MAX_PRESENCE_TEXT + 1))).toBe(false);
-});
-
-test("canonical ready parsing accepts null-prototype objects and duplicate capabilities", () => {
-  const consumer = Object.create(null) as { id: string; capabilities: string[] };
-  consumer.id = "canonical-consumer";
-  consumer.capabilities = [PRESENCE_REMOVE_CAPABILITY, PRESENCE_REMOVE_CAPABILITY];
-  const ready = Object.create(null) as { version: 1; sessionId: string; consumer: typeof consumer };
-  ready.version = 1;
-  ready.sessionId = "s1";
-  ready.consumer = consumer;
-
-  const parsed = parsePresenceReady(ready);
-  expect(parsed).toEqual(ready);
-  expect(parsed).not.toBe(ready);
-  expect(parsed?.consumer).not.toBe(consumer);
-  expect(parsed?.consumer?.capabilities).not.toBe(consumer.capabilities);
-  expect(Object.isFrozen(parsed)).toBe(true);
-  expect(Object.isFrozen(parsed?.consumer)).toBe(true);
-  expect(Object.isFrozen(parsed?.consumer?.capabilities)).toBe(true);
-  expect(parsePresenceReady(Object.assign(Object.create(null), { version: 1, sessionId: "s1" }))).toEqual({
-    version: 1,
-    sessionId: "s1",
-  });
-});
-
-test("ready parsing snapshots Proxy-backed capability data before later mutation", () => {
-  const capabilities = [PRESENCE_REMOVE_CAPABILITY];
-  const guardedCapabilities = new Proxy(capabilities, {
-    get() {
-      throw new Error("indexed or inherited reads are forbidden");
-    },
-  });
-  const guardedConsumer = new Proxy(
-    { id: "proxy-consumer", capabilities: guardedCapabilities },
-    {
-      get() {
-        throw new Error("consumer properties must come from descriptors");
+    events: {
+      emit(eventName: string, payload: unknown) {
+        bus.emit(eventName, payload);
       },
+      on() {},
     },
-  );
-
-  const parsed = parsePresenceReady({ version: 1, sessionId: "s1", consumer: guardedConsumer });
-  capabilities[0] = "changed-after-validation";
-
-  expect(parsed).toEqual({
-    version: 1,
-    sessionId: "s1",
-    consumer: { id: "proxy-consumer", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-  });
-  expect(Object.isFrozen(parsed?.consumer?.capabilities)).toBe(true);
-});
-
-test("session start emits one consumer-less discovery request", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-
-  presence.startSession(fakeCtx("s1"));
-
-  expect(discoveryEvents(emitted)).toHaveLength(1);
-  const discovery = discoveryEvents(emitted)[0]!.payload;
-  expect(isStrictDiscovery(discovery)).toBe(true);
-  expect(discovery).toEqual({ version: 1, sessionId: "s1" });
-  expect(Reflect.ownKeys(discovery)).toEqual(["version", "sessionId"]);
-});
-
-test("no update or removal is published without a valid consumer advertisement", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  const token = presence.beginRequest(fakeCtx("s1"));
-  presence.finishRequest(token);
-  expect(presenceEvents(emitted)).toEqual([]);
-});
-
-for (const profile of CANONICAL_CONSUMER_PROFILES) {
-  test(`${profile.name} consumer-first ready and replay lifecycle accepts strict private-safe V1 payloads`, () => {
-    const { pi, emitted } = fakePi();
-    const presence = new AskUserPresence(pi);
-
-    presence.handleReady(readyAdvertisement(profile, "s1"));
-    presence.startSession(fakeCtx("s1"));
-    const token = presence.beginRequest(fakeCtx("s1"));
-    presence.handleReady(readyReplayRequest("s1"));
-    presence.finishRequest(token);
-
-    const output = presenceEvents(emitted);
-    expect(profile.id).toBe(profile.name === "pi-cmux-presence V1" ? "pi-cmux-presence" : "pi-herdr-presence");
-    expect(profile.capabilities).toEqual(
-      profile.id === "pi-cmux-presence"
-        ? ["cmux-status", "cmux-progress", "cmux-attention", PRESENCE_REMOVE_CAPABILITY]
-        : [
-            PRESENCE_REMOVE_CAPABILITY,
-            "presence-summary-v1",
-            "herdr-pane-report-agent-v1",
-            "herdr-pane-report-metadata-v1",
-          ],
-    );
-    expect(output.map((entry) => entry.event)).toEqual([
-      PRESENCE_UPDATE_EVENT,
-      PRESENCE_UPDATE_EVENT,
-      PRESENCE_REMOVE_EVENT,
-    ]);
-    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
-    expect(isStrictWaitingUpdate(output[1]?.payload)).toBe(true);
-    expect(isStrictRemoval(output[2]?.payload)).toBe(true);
-    expect(output[0]?.payload.attention).toBe("info");
-    expect(output[1]?.payload.attention).toBe("none");
-    for (const entry of output) expect(isPrivacySafePresencePayload(entry.payload, "s1")).toBe(true);
-  });
-
-  test(`${profile.name} producer-first request replays only after a late ready advertisement`, () => {
-    const { pi, emitted } = fakePi();
-    const presence = new AskUserPresence(pi);
-
-    presence.startSession(fakeCtx("s1"));
-    const token = presence.beginRequest(fakeCtx("s1"));
-    expect(presenceEvents(emitted)).toEqual([]);
-
-    presence.handleReady(readyAdvertisement(profile, "s1"));
-    expect(presenceEvents(emitted)).toEqual([]);
-    presence.handleReady(readyReplayRequest("s1"));
-    presence.finishRequest(token);
-
-    expect(discoveryEvents(emitted).map((entry) => entry.payload)).toEqual([{ version: 1, sessionId: "s1" }]);
-    const output = presenceEvents(emitted);
-    expect(output.map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
-    expect(isStrictRemoval(output[1]?.payload)).toBe(true);
-    expect(output[0]?.payload.attention).toBe("none");
-    for (const entry of output) expect(isPrivacySafePresencePayload(entry.payload, "s1")).toBe(true);
-  });
+    on() {},
+  } as unknown as ExtensionAPI;
 }
 
-test("a generic Herdr consumer enables a waiting update and withdrawal", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1", { consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }));
+function presenceEvents(bus: ReturnType<typeof createEventBus>) {
+  return bus.emitted.filter(({ eventName }) => eventName === EVENT_NAMES.state || eventName === EVENT_NAMES.withdraw);
+}
 
-  const token = presence.beginRequest(fakeCtx("s1"));
-  const output = presenceEvents(emitted);
-  expect(output).toHaveLength(1);
-  expect(output[0]!.event).toBe(PRESENCE_UPDATE_EVENT);
-  expect(output[0]!.payload.state).toBe("waiting");
-  expect(output[0]!.payload.attention).toBe("info");
-  expect(output[0]!.payload.source?.id).toBe(PRESENCE_SOURCE_ID);
-  expect(output[0]!.payload.counts).toEqual({ active: 1, completed: 0, failed: 0, total: 1 });
+function start(bus: ReturnType<typeof createEventBus>) {
+  const presence = new AskUserPresence(fakePi(bus));
+  cleanups.push(() => presence.stopSession());
+  return presence;
+}
 
-  presence.finishRequest(token);
-  expect(presenceEvents(emitted)).toHaveLength(2);
-  expect(presenceEvents(emitted)[1]!.event).toBe(PRESENCE_REMOVE_EVENT);
-  expect(presenceEvents(emitted)[1]!.payload.source).toEqual({ id: PRESENCE_SOURCE_ID });
-});
+test("consumer-first V2 fanout publishes the content-free waiting state and withdrawal", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
 
-test("a valid consumer without the optional remove capability enables update and withdrawal", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1", { consumer: { id: "legacy-consumer", capabilities: [] } }));
+  presence.startSession(fakeCtx("session-private"));
+  presence.finishRequest(presence.beginRequest(fakeCtx("session-private")));
 
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("the existing pi-cmux-presence advertisement remains compatible", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("concurrent requests only raise attention once and withdraw at zero", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-
-  const first = presence.beginRequest(fakeCtx("s1"));
-  const second = presence.beginRequest(fakeCtx("s1"));
-  let output = presenceEvents(emitted);
-  expect(output[0]!.payload.attention).toBe("info");
-  expect(output[1]!.payload.attention).toBe("none");
-  expect(output[1]!.payload.counts?.active).toBe(2);
-
-  presence.finishRequest(first);
-  output = presenceEvents(emitted);
-  expect(output[2]!.event).toBe(PRESENCE_UPDATE_EVENT);
-  expect(output[2]!.payload.counts?.active).toBe(1);
-
-  presence.finishRequest(second);
-  expect(presenceEvents(emitted)[3]!.event).toBe(PRESENCE_REMOVE_EVENT);
-});
-
-test("sequence numbers increase monotonically within a session", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-
-  const first = presence.beginRequest(fakeCtx("s1"));
-  const second = presence.beginRequest(fakeCtx("s1"));
-  presence.finishRequest(first);
-  presence.finishRequest(second);
-
-  const output = presenceEvents(emitted);
-  expect(output.map((entry) => entry.payload.sequence)).toEqual([1, 2, 3, 4]);
-  expect(new Set(output.map((entry) => entry.payload.generation)).size).toBe(1);
-});
-
-test("strict ready validation rejects huge, sparse, extra, getter, and inherited payloads", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-
-  const sparse = [PRESENCE_REMOVE_CAPABILITY] as string[];
-  sparse.length = 2;
-  const getterPayload = {
-    version: 1,
-    sessionId: "s1",
-    consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-  };
-  Object.defineProperty(getterPayload, "sessionId", { enumerable: true, get: () => "s1" });
-  const inherited = Object.create({
-    version: 1,
-    sessionId: "s1",
-    consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-  });
-
-  for (const payload of [
-    readyPayload("x".repeat(MAX_PRESENCE_TEXT + 1)),
-    readyPayload("s1", {
-      consumer: { id: "x".repeat(MAX_PRESENCE_TEXT + 1), capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-    }),
-    readyPayload("s1", { consumer: { id: "herdr", capabilities: sparse } }),
-    readyPayload("s1", {
-      consumer: {
-        id: "herdr",
-        capabilities: Array.from({ length: MAX_PRESENCE_CAPABILITIES + 1 }, (_, index) => `capability-${index}`),
-      },
-    }),
-    readyPayload("s1", { extra: true }),
-    getterPayload,
-    inherited,
-  ]) {
-    presence.handleReady(payload);
-  }
-
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-  expect(presenceEvents(emitted)).toEqual([]);
-});
-
-test("malformed and foreign ready payloads are ignored", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-
-  presence.handleReady(undefined);
-  presence.handleReady({
+  expect(consumer.received).toHaveLength(2);
+  expect(consumer.received[0]).toMatchObject({
     version: 2,
-    sessionId: "s1",
-    consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
+    generation: 1,
+    sequence: 1,
+    source: "interaction",
+    state: "waiting",
+    interaction: { kind: "ask_user", pending: 1 },
+    attention: { reason: "input_required", occurrence: "new" },
   });
-  presence.handleReady(readyPayload("s1", { consumer: { id: "herdr" } }));
-  presence.handleReady(
-    readyPayload("s1", { consumer: { id: "bad\nsession", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }),
-  );
-  presence.handleReady(readyPayload("s1", { requestId: "bad\nrequest" }));
-  presence.handleReady(readyPayload("bad\nsession"));
-  presence.handleReady(readyPayload("s2"));
-
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-  expect(presenceEvents(emitted)).toEqual([]);
-});
-
-test("a late consumer advertisement and request publish the pending state once", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-
-  const token = presence.beginRequest(fakeCtx("s1"));
-  expect(presenceEvents(emitted)).toHaveLength(0);
-
-  presence.handleReady(readyPayload("s1"));
-  expect(presenceEvents(emitted)).toHaveLength(0);
-  presence.handleReady({ version: 1, sessionId: "s1" });
-  expect(presenceEvents(emitted)).toHaveLength(1);
-  expect(presenceEvents(emitted)[0]!.payload.attention).toBe("none");
-
-  presence.finishRequest(token);
-  expect(presenceEvents(emitted)[1]!.event).toBe(PRESENCE_REMOVE_EVENT);
-});
-
-test("a discovery object re-emitted after emit replays the pending state once", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-  const token = presence.beginRequest(fakeCtx("s1"));
-  const ownDiscovery = discoveryEvents(emitted)[0]!.payload;
-
-  presence.handleReady(ownDiscovery);
-  presence.handleReady({ version: 1, sessionId: "s1" });
-  presence.handleReady({ version: 1, sessionId: "s1" });
-
-  const output = presenceEvents(emitted);
-  expect(output.map((entry) => entry.event)).toEqual([
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_UPDATE_EVENT,
+  expect(consumer.received[1]).toMatchObject({
+    version: 2,
+    generation: 1,
+    sequence: 2,
+    source: "interaction",
+  });
+  expect("state" in consumer.received[1]!).toBe(false);
+  expect(Object.keys(consumer.received[1]!).sort()).toEqual([
+    "generation",
+    "sequence",
+    "sessionEpoch",
+    "source",
+    "version",
   ]);
-  expect(output.map((entry) => entry.payload.sequence)).toEqual([1, 2, 3, 4]);
-  expect(output.map((entry) => entry.payload.attention)).toEqual(["info", "none", "none", "none"]);
+});
+
+test("producer-first retention replays through a shared consumer handle without a new alert", () => {
+  const bus = createEventBus();
+  const presence = start(bus);
+  presence.startSession(fakeCtx("session-private"));
+  const token = presence.beginRequest(fakeCtx("session-private"));
+  expect(presenceEvents(bus)).toEqual([]);
+
+  const consumer = attachV2Consumer(bus, "pi-herdr-presence");
+  cleanups.push(() => consumer.deactivate());
+  expect(consumer.received).toHaveLength(1);
+  expect(consumer.received[0]).toMatchObject({
+    state: "waiting",
+    interaction: { kind: "ask_user", pending: 1 },
+    attention: { reason: "input_required", occurrence: "retained" },
+  });
 
   presence.finishRequest(token);
-  expect(presenceEvents(emitted).at(-1)!.event).toBe(PRESENCE_REMOVE_EVENT);
+  expect(consumer.received.at(-1)).toMatchObject({ source: "interaction", generation: 1, sequence: 2 });
 });
 
-test("a replayed ready request cannot synchronously recurse", () => {
-  let presence: AskUserPresence;
-  const { pi, emitted } = fakePi((event, payload) => {
-    if (event === PRESENCE_UPDATE_EVENT && (payload as PresenceEventPayload).sequence === 2) {
-      presence.handleReady({ version: 1, sessionId: "s1" });
-    }
-  });
-  presence = new AskUserPresence(pi);
+test("concurrent requests increment sequences but only the lifecycle edge is new attention", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
   presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-  const token = presence.beginRequest(fakeCtx("s1"));
 
-  presence.handleReady({ version: 1, sessionId: "s1" });
-  expect(presenceEvents(emitted).map((entry) => entry.payload.sequence)).toEqual([1, 2]);
+  const first = presence.beginRequest(fakeCtx("s1"));
+  const second = presence.beginRequest(fakeCtx("s1"));
+  presence.finishRequest(first);
+  presence.finishRequest(second);
 
-  presence.finishRequest(token);
+  const states = consumer.received.filter((event) => "state" in event);
+  expect(states.map((event) => event.sequence)).toEqual([1, 2, 3]);
+  expect(states.map((event) => event.interaction?.pending)).toEqual([1, 2, 1]);
+  expect(states.map((event) => event.attention?.occurrence)).toEqual(["new", "retained", "retained"]);
+  expect(consumer.received.at(-1)).toMatchObject({ generation: 1, sequence: 4, source: "interaction" });
 });
 
-test("a ready advertisement with an extra field is ignored", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
+test("each interaction lifecycle uses a higher generation and resets its sequence", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
   presence.startSession(fakeCtx("s1"));
 
-  presence.handleReady(readyPayload("s1", { requestId: "obsolete-request-id" }));
+  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
   presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
 
-  expect(presenceEvents(emitted)).toEqual([]);
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [2, 2],
+  ]);
 });
 
-test("producer-first discovery accepts a synchronous advertisement response", () => {
-  let presence: AskUserPresence;
-  const { pi, emitted } = fakePi((event, payload) => {
-    if (event !== PRESENCE_READY_EVENT || !isStrictDiscovery(payload)) return;
-    presence.handleReady({
-      version: 1,
-      sessionId: payload.sessionId,
-      consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-    });
-  });
-  presence = new AskUserPresence(pi);
-
+test("session replacement fences stale tokens, withdraws, and activates a fresh producer", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
   presence.startSession(fakeCtx("s1"));
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
 
-  expect(discoveryEvents(emitted)).toHaveLength(1);
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("multiple consumer advertisements stay passive until a consumer-less request replays once", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  const token = presence.beginRequest(fakeCtx("s1"));
-
-  presence.handleReady(readyPayload("s1", { consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }));
-  presence.handleReady(
-    readyPayload("s1", {
-      consumer: { id: "another-consumer", capabilities: ["other-v1", PRESENCE_REMOVE_CAPABILITY] },
-    }),
-  );
-  expect(presenceEvents(emitted)).toEqual([]);
-
-  presence.handleReady({ version: 1, sessionId: "s1" });
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT]);
-  presence.finishRequest(token);
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("consumer-first advertisement remains active after session start", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.handleReady(readyPayload("s1", { consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] } }));
-
-  presence.startSession(fakeCtx("s1"));
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-
-  expect(discoveryEvents(emitted)).toHaveLength(1);
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("own discovery and synchronous replayed responses do not recurse or republish", () => {
-  let presence: AskUserPresence;
-  const { pi, emitted } = fakePi((event, payload) => {
-    if (event !== PRESENCE_READY_EVENT) return;
-    // Event buses can deliver the producer's request to its own listener.
-    presence.handleReady(payload);
-    if (!isStrictDiscovery(payload)) return;
-    const response = {
-      version: 1,
-      sessionId: payload.sessionId,
-      consumer: { id: "herdr", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-    };
-    // A consumer may respond before emit returns and replay that response.
-    presence.handleReady(response);
-    presence.handleReady(response);
-  });
-  presence = new AskUserPresence(pi);
-
-  presence.startSession(fakeCtx("s1"));
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
-
-  expect(discoveryEvents(emitted)).toHaveLength(1);
-  expect(presenceEvents(emitted).map((entry) => entry.event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-});
-
-test("session shutdown withdraws presence and stale tokens are ignored", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-
-  const token = presence.beginRequest(fakeCtx("s1"));
-  presence.stopSession();
-  expect(presenceEvents(emitted)[1]!.event).toBe(PRESENCE_REMOVE_EVENT);
-
-  presence.finishRequest(token);
-  expect(presenceEvents(emitted)).toHaveLength(2);
-});
-
-test("a session change discovers s2 before its synchronous ready response updates and removes it", () => {
-  let presence: AskUserPresence;
-  const { pi, emitted } = fakePi((event, payload) => {
-    if (event !== PRESENCE_READY_EVENT || !isStrictDiscovery(payload)) return;
-    presence.handleReady(
-      readyPayload(payload.sessionId, {
-        consumer: { id: `consumer-${payload.sessionId}`, capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-      }),
-    );
-  });
-  presence = new AskUserPresence(pi);
-
-  presence.startSession(fakeCtx("s1"));
   const stale = presence.beginRequest(fakeCtx("s1"));
   const fresh = presence.beginRequest(fakeCtx("s2"));
-
-  const discoveries = discoveryEvents(emitted).map((entry) => entry.payload.sessionId);
-  expect(discoveries).toEqual(["s1", "s2"]);
-  const output = presenceEvents(emitted);
-  expect(output.map((entry) => entry.event)).toEqual([
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_REMOVE_EVENT,
-    PRESENCE_UPDATE_EVENT,
-  ]);
-  expect(output[2]!.payload.sessionId).toBe("s2");
-  expect(output[2]!.payload.attention).toBe("info");
-
   presence.finishRequest(stale);
   presence.finishRequest(fresh);
-  expect(presenceEvents(emitted).at(-1)!.event).toBe(PRESENCE_REMOVE_EVENT);
-  expect(presenceEvents(emitted).at(-1)!.payload.sessionId).toBe("s2");
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [2, 2],
+  ]);
 });
 
-test("an unsafe session id disables presence output", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("bad\nsession"));
-  presence.handleReady(readyPayload("bad\nsession"));
+test("a temporary occupied source retries activation without replacing the session", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const blocker = createPresenceProducer({ source: "interaction", emit: () => undefined });
+  if (!blocker) throw new Error("producer creation failed");
+  expect(blocker.activate()).toBe(true);
+  cleanups.push(() => blocker.deactivate());
+  const presence = start(bus);
+  const ctx = fakeCtx("s1");
 
-  presence.finishRequest(presence.beginRequest(fakeCtx("bad\nsession")));
-  expect(emitted).toEqual([]);
+  presence.startSession(ctx);
+  const first = presence.beginRequest(ctx);
+  expect(presenceEvents(bus)).toEqual([]);
+
+  expect(blocker.deactivate()).toBe(true);
+  const second = presence.beginRequest(ctx);
+  expect(second.epoch).toBe(first.epoch);
+  presence.finishRequest(first);
+  presence.finishRequest(second);
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+    [1, 3],
+    [1, 4],
+  ]);
+  expect(consumer.received.filter((event) => "state" in event).map((event) => event.interaction?.pending)).toEqual([
+    1, 2, 1,
+  ]);
 });
 
-test("a throwing session manager does not propagate", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  const throwing = fakeCtx(() => {
-    throw new Error("session lookup failed");
-  });
+test("sequence saturation withdraws, recreates the source, and republishes pending state", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+  const ctx = fakeCtx("s1");
+  presence.startSession(ctx);
+  const first = presence.beginRequest(ctx);
 
-  expect(() => presence.startSession(throwing)).not.toThrow();
-  expect(() => presence.finishRequest(presence.beginRequest(throwing))).not.toThrow();
-  expect(emitted).toEqual([]);
+  (presence as unknown as { sequence: number }).sequence = MAX_INTEGER - 1;
+  const second = presence.beginRequest(ctx);
+  presence.finishRequest(first);
+  presence.finishRequest(second);
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, MAX_INTEGER],
+    [1, 1],
+    [1, 2],
+    [1, 3],
+  ]);
+  const states = consumer.received.filter((event) => "state" in event);
+  expect(states.map((event) => event.interaction?.pending)).toEqual([1, 2, 1]);
+  expect(states.map((event) => event.attention?.occurrence)).toEqual(["new", "retained", "retained"]);
+  expect(consumer.received.every((event) => event.generation <= MAX_INTEGER && event.sequence <= MAX_INTEGER)).toBe(
+    true,
+  );
 });
 
-test("a throwing event bus does not propagate", () => {
-  const { pi } = fakePi(() => {
-    throw new Error("event bus down");
-  });
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
+test("generation saturation recreates the source and starts a valid lifecycle", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+  const ctx = fakeCtx("s1");
+  presence.startSession(ctx);
+  presence.finishRequest(presence.beginRequest(ctx));
 
-  expect(() => presence.handleReady(readyPayload("s1"))).not.toThrow();
-  expect(() => presence.finishRequest(presence.beginRequest(fakeCtx("s1")))).not.toThrow();
+  (presence as unknown as { generation: number }).generation = MAX_INTEGER;
+  presence.finishRequest(presence.beginRequest(ctx));
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+    [1, 1],
+    [1, 2],
+  ]);
 });
 
-test("presence payloads never carry questionnaire content", () => {
-  const { pi, emitted } = fakePi();
-  const presence = new AskUserPresence(pi);
-  presence.startSession(fakeCtx("s1"));
-  presence.handleReady(readyPayload("s1"));
-  presence.finishRequest(presence.beginRequest(fakeCtx("s1")));
+test("session shutdown withdraws once, deactivates, and ignores a stale completion", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+  const ctx = fakeCtx("s1");
+  presence.startSession(ctx);
+  const token = presence.beginRequest(ctx);
+  presence.stopSession();
+  presence.finishRequest(token);
 
-  const serialized = JSON.stringify(emitted);
-  expect(serialized).not.toContain("prompt");
-  expect(serialized).not.toContain("options");
-  expect(serialized).not.toContain("answers");
-  for (const field of ["custom", "filter", "skipped", "selections", "defaultValues", "value"]) {
-    expect(serialized).not.toContain(`"${field}"`);
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+  ]);
+});
+
+test("V2 lifecycle suppresses throwing sessionManager and getSessionId lookups", () => {
+  const contexts = [
+    fakeCtx(() => {
+      throw new Error("session ID lookup failed");
+    }),
+    Object.defineProperty({}, "sessionManager", {
+      get() {
+        throw new Error("session manager lookup failed");
+      },
+    }) as ExtensionContext,
+  ];
+
+  for (const [index, ctx] of contexts.entries()) {
+    const bus = createEventBus();
+    const consumer = attachV2Consumer(bus, index === 0 ? "pi-cmux-presence" : "pi-herdr-presence");
+    cleanups.push(() => consumer.deactivate());
+    const presence = start(bus);
+
+    expect(() => presence.startSession(ctx)).not.toThrow();
+    expect(() => presence.finishRequest(presence.beginRequest(ctx))).not.toThrow();
+    expect(() => presence.stopSession()).not.toThrow();
+    expect(consumer.received).toHaveLength(2);
   }
-  expect(serialized.match(/"label"/g)).toHaveLength(1);
-  expect(serialized).toContain('"label":"Pi needs your input"');
+});
+
+test("throwing observer emission never affects presence callers", () => {
+  const pi = {
+    events: {
+      emit() {
+        throw new Error("observer failed");
+      },
+      on() {},
+    },
+    on() {},
+  } as unknown as ExtensionAPI;
+  const presence = new AskUserPresence(pi);
+  cleanups.push(() => presence.stopSession());
+  const ctx = fakeCtx("s1");
+
+  expect(() => presence.startSession(ctx)).not.toThrow();
+  expect(() => presence.finishRequest(presence.beginRequest(ctx))).not.toThrow();
+  expect(() => presence.stopSession()).not.toThrow();
+});
+
+test("V2 payloads never contain questionnaire data, cancellation data, or a session ID", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+  presence.startSession(fakeCtx("session-id-sentinel-8d2e"));
+  presence.finishRequest(presence.beginRequest(fakeCtx("session-id-sentinel-8d2e")));
+
+  const payloads = presenceEvents(bus).map(({ payload }) => payload);
+  expect(serializedPayloadsArePrivate(payloads)).toBe(true);
+  for (const payload of payloads) {
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("session-id-sentinel-8d2e");
+    for (const sentinel of QUESTIONNAIRE_SENTINELS) expect(serialized).not.toContain(sentinel);
+  }
+});
+
+test("the V2 implementation has no legacy protocol or polling, socket, or CLI coupling", async () => {
+  const source = await Bun.file(new URL("../src/presence.ts", import.meta.url)).text();
+  const currentSupportText = await Promise.all(
+    [
+      "../src/presence.ts",
+      "../src/tool.ts",
+      "../README.md",
+      "../CHANGELOG.md",
+      "../docs/configuration.md",
+      "../docs/development.md",
+    ].map(async (path) => Bun.file(new URL(path, import.meta.url)).text()),
+  );
+
+  const retiredProtocol = new RegExp(
+    [
+      ["pi-presence:", ".*:", "v", "1"].join(""),
+      ["presence-remove", "v", "1"].join("-"),
+      ["parsePresence", "Ready"].join(""),
+    ].join("|"),
+    "i",
+  );
+  expect(currentSupportText.join("\n")).not.toMatch(retiredProtocol);
+  expect(source).not.toMatch(/poll|socket|\bcli\b/i);
 });

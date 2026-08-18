@@ -1,22 +1,15 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { EVENT_NAMES } from "@pi/presence";
 import askUser from "../index.ts";
-import {
-  PRESENCE_READY_EVENT,
-  PRESENCE_REMOVE_CAPABILITY,
-  PRESENCE_REMOVE_EVENT,
-  PRESENCE_UPDATE_EVENT,
-} from "../src/presence.ts";
 import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
 import {
-  CANONICAL_CONSUMER_PROFILES,
-  isPrivacySafePresencePayload,
-  isStrictRemoval,
-  isStrictWaitingUpdate,
+  attachV2Consumer,
+  createEventBus,
   QUESTIONNAIRE_SENTINELS,
-  readyAdvertisement,
+  serializedPayloadsArePrivate,
 } from "./helpers/presence-consumer.ts";
 import { makeQuestion } from "./helpers/question.ts";
 
@@ -44,6 +37,10 @@ type RegisteredTool = {
 
 type EventListener = (payload: unknown) => void;
 type LifecycleListener = (event: unknown, ctx: ExtensionContext) => void;
+const shutdowns: Array<() => void> = [];
+afterEach(() => {
+  for (const shutdown of shutdowns.splice(0)) shutdown();
+});
 type CustomComponent = { focused: boolean; handleInput(data: string): void };
 type CustomFactory<T> = (
   tui: unknown,
@@ -56,6 +53,7 @@ function register() {
   const hooks: string[] = [];
   const events: string[] = [];
   const emitted: { event: string; payload: unknown }[] = [];
+  const bus = createEventBus();
   const eventListeners = new Map<string, EventListener>();
   const lifecycleListeners = new Map<string, LifecycleListener>();
   const tools: RegisteredTool[] = [];
@@ -71,13 +69,16 @@ function register() {
       },
       emit(event: string, payload: unknown) {
         emitted.push({ event, payload });
+        bus.emit(event, payload);
       },
     },
     registerTool(tool: RegisteredTool) {
       tools.push(tool);
     },
   } as unknown as ExtensionAPI);
-  return { hooks, events, emitted, eventListeners, lifecycleListeners, tool: tools[0]!, tools };
+  const registration = { hooks, events, emitted, eventListeners, lifecycleListeners, tool: tools[0]!, tools, bus };
+  shutdowns.push(() => registration.lifecycleListeners.get("session_shutdown")?.({}, {} as ExtensionContext));
+  return registration;
 }
 
 /**
@@ -127,39 +128,6 @@ function trackedAbortSignal(): { signal: AbortSignal; listenerCount: () => numbe
   };
 }
 
-function presenceEvents(registration: ReturnType<typeof register>) {
-  return registration.emitted.filter(({ event }) => event === PRESENCE_UPDATE_EVENT || event === PRESENCE_REMOVE_EVENT);
-}
-
-function activatePresence(registration: ReturnType<typeof register>, ctx: ExtensionContext): void {
-  registration.lifecycleListeners.get("session_start")?.({}, ctx);
-  const discovery = registration.emitted.find(({ event }) => event === PRESENCE_READY_EVENT);
-  expect(discovery?.payload).toEqual({ version: 1, sessionId: "s1" });
-
-  registration.eventListeners.get(PRESENCE_READY_EVENT)?.({
-    version: 1,
-    sessionId: "s1",
-    consumer: { id: "test-consumer", capabilities: [PRESENCE_REMOVE_CAPABILITY] },
-  });
-}
-
-function factoryThrowingContext(): ExtensionContext {
-  return {
-    mode: "tui",
-    sessionManager: { getSessionId: () => "s1" },
-    ui: {
-      custom<T>(factory: CustomFactory<T>): Promise<T> {
-        factory(fakeTui(), fakeTheme(), new Proxy({}, { get: () => throwFactoryError() }), () => undefined);
-        throw new Error("factory unexpectedly returned");
-      },
-    },
-  } as unknown as ExtensionContext;
-}
-
-function throwFactoryError(): never {
-  throw new Error("factory failed");
-}
-
 const SINGLE_QUESTION = {
   questions: [
     {
@@ -174,12 +142,15 @@ const SINGLE_QUESTION = {
   ],
 };
 
-const PRIVACY_SENTINEL_QUESTION = {
+const SENTINEL_QUESTION = {
   questions: [
     {
       id: QUESTIONNAIRE_SENTINELS[0],
       label: QUESTIONNAIRE_SENTINELS[1],
       prompt: QUESTIONNAIRE_SENTINELS[2],
+      allowOther: true,
+      otherLabel: QUESTIONNAIRE_SENTINELS[6],
+      otherPlaceholder: QUESTIONNAIRE_SENTINELS[7],
       options: [
         {
           value: QUESTIONNAIRE_SENTINELS[3],
@@ -191,7 +162,111 @@ const PRIVACY_SENTINEL_QUESTION = {
   ],
 };
 
-test("the entrypoint registers one tool plus lifecycle and presence observers", () => {
+function attachToolPresence(registration: ReturnType<typeof register>, ctx: ExtensionContext) {
+  registration.lifecycleListeners.get("session_start")?.({}, ctx);
+  const consumer = attachV2Consumer(registration.bus);
+  shutdowns.push(() => consumer.deactivate());
+  return consumer;
+}
+
+function closeToolPresence(
+  registration: ReturnType<typeof register>,
+  consumer: ReturnType<typeof attachV2Consumer>,
+): void {
+  registration.lifecycleListeners.get("session_shutdown")?.({}, {} as ExtensionContext);
+  consumer.deactivate();
+}
+
+function assertPrivateToolPresence(
+  registration: ReturnType<typeof register>,
+  consumer: ReturnType<typeof attachV2Consumer>,
+): void {
+  const output = registration.emitted.filter(
+    ({ event }) => event === EVENT_NAMES.state || event === EVENT_NAMES.withdraw,
+  );
+  expect(output).toHaveLength(2);
+  expect(consumer.received).toHaveLength(2);
+  expect(serializedPayloadsArePrivate(output.map(({ payload }) => payload))).toBe(true);
+
+  for (const { event, payload } of output) {
+    const state = event === EVENT_NAMES.state;
+    expect(Object.keys(payload as object).sort()).toEqual(
+      state
+        ? ["attention", "generation", "interaction", "sequence", "sessionEpoch", "source", "state", "version"]
+        : ["generation", "sequence", "sessionEpoch", "source", "version"],
+    );
+    if (state) {
+      expect(payload).toMatchObject({
+        interaction: { kind: "ask_user", pending: 1 },
+        attention: { reason: "input_required", occurrence: "new" },
+      });
+      expect(Object.keys((payload as { interaction: object }).interaction).sort()).toEqual(["kind", "pending"]);
+      expect(Object.keys((payload as { attention: object }).attention).sort()).toEqual(["occurrence", "reason"]);
+    }
+    const serialized = JSON.stringify(payload);
+    for (const sentinel of QUESTIONNAIRE_SENTINELS) expect(serialized).not.toContain(sentinel);
+  }
+}
+
+function factoryThrowingContext(sessionId = QUESTIONNAIRE_SENTINELS[8]): ExtensionContext {
+  return {
+    mode: "tui",
+    sessionManager: { getSessionId: () => sessionId },
+    ui: {
+      custom<T>(factory: CustomFactory<T>): Promise<T> {
+        factory(
+          fakeTui(),
+          fakeTheme(),
+          new Proxy(
+            {},
+            {
+              get() {
+                throw new Error("factory failed");
+              },
+            },
+          ),
+          () => undefined,
+        );
+        throw new Error("factory unexpectedly returned");
+      },
+    },
+  } as unknown as ExtensionContext;
+}
+
+function cancelledResultContext(sessionId = QUESTIONNAIRE_SENTINELS[8]): ExtensionContext {
+  return {
+    mode: "tui",
+    sessionManager: { getSessionId: () => sessionId },
+    ui: {
+      custom<T>(factory: CustomFactory<T>): Promise<T> {
+        let settle: ((result: T) => void) | undefined;
+        const result = new Promise<T>((resolve) => {
+          settle = resolve;
+        });
+        const component = factory(fakeTui(), fakeTheme(), {}, (value) => settle?.(value));
+        component.focused = true;
+        queueMicrotask(() =>
+          settle?.({
+            questions: [],
+            answers: [
+              {
+                id: QUESTIONNAIRE_SENTINELS[0],
+                kind: "custom",
+                value: QUESTIONNAIRE_SENTINELS[6],
+                label: QUESTIONNAIRE_SENTINELS[6],
+              },
+            ],
+            cancelled: true,
+            cancelReason: QUESTIONNAIRE_SENTINELS[7],
+          } as unknown as T),
+        );
+        return result;
+      },
+    },
+  } as unknown as ExtensionContext;
+}
+
+test("the entrypoint keeps the public tool registration contract", () => {
   const { hooks, events, tools, tool } = register();
 
   expect(tools).toHaveLength(1);
@@ -200,7 +275,7 @@ test("the entrypoint registers one tool plus lifecycle and presence observers", 
   expect(tool.description).toBe(TOOL_DESCRIPTION);
   expect(tool.executionMode).toBe("sequential");
   expect(hooks).toEqual(["session_start", "session_shutdown"]);
-  expect(events).toEqual([PRESENCE_READY_EVENT]);
+  expect(events).toEqual([]);
 });
 
 test("non-interactive sessions return the UI-unavailable error", async () => {
@@ -314,117 +389,107 @@ test("abort listeners are removed after settled success and rejected UI paths", 
   expect(rejection.listenerCount()).toBe(0);
 });
 
-for (const [name, context] of [
-  [
-    "ui.custom throws synchronously",
-    () =>
-      ({
-        mode: "tui",
-        sessionManager: { getSessionId: () => "s1" },
-        ui: {
-          custom: () => {
-            throw new Error("ui.custom failed");
-          },
-        },
-      }) as unknown as ExtensionContext,
-  ],
-  ["the questionnaire factory throws", factoryThrowingContext],
-  [
-    "ui.custom rejects asynchronously",
-    () =>
-      ({
-        mode: "tui",
-        sessionManager: { getSessionId: () => "s1" },
-        ui: { custom: () => Promise.reject(new Error("ui.custom rejected")) },
-      }) as unknown as ExtensionContext,
-  ],
-] as const) {
-  test(`presence is withdrawn when ${name}`, async () => {
-    const registration = register();
-    const ctx = context();
-    activatePresence(registration, ctx);
+test("V2 presence follows tool success, cancellation, abort, UI failures, and shutdown without exposing inputs", async () => {
+  const success = register();
+  const successContext = tuiContext(["\u001b[B", "\r", QUESTIONNAIRE_SENTINELS[6], "\r"], QUESTIONNAIRE_SENTINELS[8]);
+  const successConsumer = attachToolPresence(success, successContext);
+  const successResult = await success.tool.execute("call-1", SENTINEL_QUESTION, undefined, undefined, successContext);
+  expect((successResult.details as QuestionnaireResult).answers).toMatchObject([
+    { kind: "custom", value: QUESTIONNAIRE_SENTINELS[6] },
+  ]);
+  assertPrivateToolPresence(success, successConsumer);
+  closeToolPresence(success, successConsumer);
 
-    await expect(registration.tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, ctx)).rejects.toThrow();
-    expect(registration.emitted.map(({ event }) => event)).toEqual([
-      PRESENCE_READY_EVENT,
-      PRESENCE_UPDATE_EVENT,
-      PRESENCE_REMOVE_EVENT,
-    ]);
-  });
-}
+  const cancelled = register();
+  const cancelledContext = tuiContext(["\u001b"], QUESTIONNAIRE_SENTINELS[8]);
+  const cancelledConsumer = attachToolPresence(cancelled, cancelledContext);
+  const cancelledResult = await cancelled.tool.execute(
+    "call-2",
+    SENTINEL_QUESTION,
+    undefined,
+    undefined,
+    cancelledContext,
+  );
+  expect((cancelledResult.details as QuestionnaireResult).cancelReason).toBe("user");
+  assertPrivateToolPresence(cancelled, cancelledConsumer);
+  closeToolPresence(cancelled, cancelledConsumer);
 
-for (const [name, script, abort] of [
-  ["completes normally", ["\u001b[B", "\r"], false],
-  ["is cancelled by the user", ["\u001b"], false],
-  ["is aborted", [], true],
-] as const) {
-  test(`presence follows the full lifecycle when the questionnaire ${name}`, async () => {
-    const registration = register();
-    const ctx = tuiContext([...script]);
-    const controller = abort ? new AbortController() : undefined;
-    activatePresence(registration, ctx);
-
-    const result = registration.tool.execute("call-1", SINGLE_QUESTION, controller?.signal, undefined, ctx);
-    if (controller) controller.abort();
-    await result;
-
-    expect(registration.emitted.map(({ event }) => event)).toEqual([
-      PRESENCE_READY_EVENT,
-      PRESENCE_UPDATE_EVENT,
-      PRESENCE_REMOVE_EVENT,
-    ]);
-    expect(presenceEvents(registration)[0]!.payload).toMatchObject({
-      counts: { active: 1, total: 1 },
-      attention: "info",
-    });
-  });
-}
-
-for (const profile of CANONICAL_CONSUMER_PROFILES) {
-  test(`${profile.name} receives one strict private-safe removal after question resolution`, async () => {
-    const registration = register();
-    const ctx = tuiContext(["\r"]);
-    registration.lifecycleListeners.get("session_start")?.({}, ctx);
-    registration.eventListeners.get(PRESENCE_READY_EVENT)?.(readyAdvertisement(profile, "s1"));
-
-    const result = await registration.tool.execute("call-1", PRIVACY_SENTINEL_QUESTION, undefined, undefined, ctx);
-    expect((result.details as QuestionnaireResult).cancelled).toBe(false);
-
-    const output = presenceEvents(registration);
-    expect(output.map(({ event }) => event)).toEqual([PRESENCE_UPDATE_EVENT, PRESENCE_REMOVE_EVENT]);
-    expect(isStrictWaitingUpdate(output[0]?.payload)).toBe(true);
-    expect(isStrictRemoval(output[1]?.payload)).toBe(true);
-    for (const { payload } of registration.emitted) {
-      expect(isPrivacySafePresencePayload(payload, "s1")).toBe(true);
-      expect((payload as { sessionId?: unknown }).sessionId).toBe("s1");
-      const serializedPayload = JSON.stringify(payload);
-      for (const sentinel of QUESTIONNAIRE_SENTINELS) expect(serializedPayload).not.toContain(sentinel);
-    }
-  });
-}
-
-test("session shutdown withdraws pending presence without a duplicate removal", async () => {
-  const registration = register();
+  const aborted = register();
+  const abortedContext = tuiContext([], QUESTIONNAIRE_SENTINELS[8], true);
   const controller = new AbortController();
-  const ctx = tuiContext([]);
-  activatePresence(registration, ctx);
-
-  const pending = registration.tool.execute("call-1", SINGLE_QUESTION, controller.signal, undefined, ctx);
-  expect(registration.emitted.map(({ event }) => event)).toEqual([PRESENCE_READY_EVENT, PRESENCE_UPDATE_EVENT]);
-
-  registration.lifecycleListeners.get("session_shutdown")?.({} as never, {} as ExtensionContext);
-  expect(registration.emitted.map(({ event }) => event)).toEqual([
-    PRESENCE_READY_EVENT,
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_REMOVE_EVENT,
-  ]);
-
+  const abortedConsumer = attachToolPresence(aborted, abortedContext);
+  const abortedResult = aborted.tool.execute("call-3", SENTINEL_QUESTION, controller.signal, undefined, abortedContext);
   controller.abort();
+  expect((await abortedResult).details as QuestionnaireResult).toMatchObject({ cancelReason: "aborted" });
+  assertPrivateToolPresence(aborted, abortedConsumer);
+  closeToolPresence(aborted, abortedConsumer);
+
+  const syncUiFailure = register();
+  const syncUiContext = {
+    mode: "tui",
+    sessionManager: { getSessionId: () => QUESTIONNAIRE_SENTINELS[8] },
+    ui: {
+      custom: () => {
+        throw new Error("ui.custom sentinel failure");
+      },
+    },
+  } as unknown as ExtensionContext;
+  const syncUiConsumer = attachToolPresence(syncUiFailure, syncUiContext);
+  await expect(
+    syncUiFailure.tool.execute("call-4", SENTINEL_QUESTION, undefined, undefined, syncUiContext),
+  ).rejects.toThrow("ui.custom sentinel failure");
+  assertPrivateToolPresence(syncUiFailure, syncUiConsumer);
+  closeToolPresence(syncUiFailure, syncUiConsumer);
+
+  const factoryFailure = register();
+  const factoryContext = factoryThrowingContext();
+  const factoryConsumer = attachToolPresence(factoryFailure, factoryContext);
+  await expect(
+    factoryFailure.tool.execute("call-5", SENTINEL_QUESTION, undefined, undefined, factoryContext),
+  ).rejects.toThrow("factory failed");
+  assertPrivateToolPresence(factoryFailure, factoryConsumer);
+  closeToolPresence(factoryFailure, factoryConsumer);
+
+  const asyncUiFailure = register();
+  const asyncUiContext = {
+    mode: "tui",
+    sessionManager: { getSessionId: () => QUESTIONNAIRE_SENTINELS[8] },
+    ui: { custom: () => Promise.reject(new Error("ui.custom async sentinel failure")) },
+  } as unknown as ExtensionContext;
+  const asyncUiConsumer = attachToolPresence(asyncUiFailure, asyncUiContext);
+  await expect(
+    asyncUiFailure.tool.execute("call-6", SENTINEL_QUESTION, undefined, undefined, asyncUiContext),
+  ).rejects.toThrow("ui.custom async sentinel failure");
+  assertPrivateToolPresence(asyncUiFailure, asyncUiConsumer);
+  closeToolPresence(asyncUiFailure, asyncUiConsumer);
+
+  const shutdown = register();
+  const shutdownContext = tuiContext([], QUESTIONNAIRE_SENTINELS[8], true);
+  const shutdownController = new AbortController();
+  const shutdownConsumer = attachToolPresence(shutdown, shutdownContext);
+  const pending = shutdown.tool.execute(
+    "call-7",
+    SENTINEL_QUESTION,
+    shutdownController.signal,
+    undefined,
+    shutdownContext,
+  );
+  shutdown.lifecycleListeners.get("session_shutdown")?.({}, shutdownContext);
+  shutdownController.abort();
   await pending;
-  expect(presenceEvents(registration).map(({ event }) => event)).toEqual([
-    PRESENCE_UPDATE_EVENT,
-    PRESENCE_REMOVE_EVENT,
-  ]);
+  assertPrivateToolPresence(shutdown, shutdownConsumer);
+  closeToolPresence(shutdown, shutdownConsumer);
+});
+
+test("V2 presence excludes host-supplied cancellation and answer data", async () => {
+  const registration = register();
+  const ctx = cancelledResultContext();
+  const consumer = attachToolPresence(registration, ctx);
+
+  const result = await registration.tool.execute("call-8", SENTINEL_QUESTION, undefined, undefined, ctx);
+  expect((result.details as QuestionnaireResult).cancelReason as unknown).toBe(QUESTIONNAIRE_SENTINELS[7]);
+  assertPrivateToolPresence(registration, consumer);
+  closeToolPresence(registration, consumer);
 });
 
 test("renderCall summarizes the question count and labels", () => {

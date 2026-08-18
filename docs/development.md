@@ -35,10 +35,10 @@ test/state.test.ts      — 탭·커서·필터·다중 선택·자유 입력·�
 test/render.test.ts     — 폭 경계, 뷰포트, 들여쓰기, 옵션·요약·도움말 문자열 테스트
 test/keys.test.ts       — 사용자 키 바인딩, 표시 레이블, fallback 테스트
 test/component.test.ts  — 실제 pi-tui 편집기와 fake TUI/theme으로 키 입력부터 렌더 출력까지 검증
-test/presence.test.ts   — 게이트 조건, payload 형식, 순서 필드, 실패 격리, 개인정보 canary 테스트
+test/presence.test.ts   — shared consumer fanout으로 ask-user projection lifecycle, 실패 격리, 개인정보 canary 테스트
 test/tool.test.ts       — 오류 결과, 결과 텍스트, 호출 라벨 포매팅 테스트
 test/entrypoint.test.ts — 등록 표면, 비대화형 경로, 완료·취소·abort 경로, 렌더러 테스트
-test/helpers/           — fake theme·fake TUI, 정규화 기본값 질문 factory(`question.ts`), 외부 구현에 의존하지 않는 canonical presence 소비자 profile fixture
+test/helpers/           — fake theme·fake TUI, 정규화 기본값 질문 factory(`question.ts`), shared consumer/event-bus test helper
 docs/                   — 주제별 문서
 ```
 
@@ -63,21 +63,22 @@ docs/                   — 주제별 문서
 - 편집·필터 중이 아닌 질문 화면의 `Esc`는 바인딩 설정과 무관하게 항상 설문을 취소하는 escape hatch여야 합니다.
 - 라이브로 렌더링되는 필터 텍스트와 자유 입력 편집기 버퍼는 답변 기록 시점뿐 아니라 입력 시점에도 제어·bidi 문자를 제거하고 각각의 길이 제한을 적용해야 합니다. 편집기 버퍼를 다시 쓰는 것은 실제로 위험하거나 길이를 초과한 입력에만 한정합니다. `setText`는 커서를 끝으로 옮기고 undo 스냅샷을 남기므로 입력마다 호출해서는 안 됩니다.
 - 다중 선택 자유 입력이 최대 개수를 넘겨 거부되면 입력을 저장하지 않고, 이전에 확정된 답변도 함께 지웁니다. 검토 탭이 사용자가 이미 벗어난 값을 제출할 수 있으면 안 됩니다.
-- presence는 관찰용입니다. 이벤트 발행 실패, 소비자 부재, 잘못된 세션 ID가 질문 실패로 이어져서는 안 됩니다.
+- presence는 관찰용입니다. shared producer 생성·발행·철회·비활성화 또는 event-bus 전달 실패와 소비자 부재가 질문 실패로 이어져서는 안 됩니다. source 점유로 활성화가 실패해도 session epoch·pending 요청·token accounting을 초기화하지 않고 나중에 재시도합니다.
+- shared protocol의 lifecycle·ordinal·replay·fence 규칙을 이 저장소에 구현하거나 문서로 복제하지 않습니다. ask-user의 pending projection만 유지하며, 상세 계약은 [`configuration.md`](configuration.md)의 immutable shared-document 링크를 따릅니다.
 - presence payload에 질문·옵션·답변 내용을 넣지 않습니다. 새 필드를 추가하면 [`configuration.md`](configuration.md)의 개인정보 범위와 canary 테스트를 함께 갱신합니다.
 - 도구는 `sequential` 실행 모드를 유지합니다. 동시 질문이 TUI를 경합하지 않게 하기 위한 것입니다.
 
 ## 검증 범위
 
-`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, typebox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, presence 게이트·payload·순서 필드·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다.
+`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, typebox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, ask-user presence projection·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다.
 
-### 결정론적 호환성 근거
+### 결정론적 protocol 검증
 
-`test/helpers/presence-consumer.ts`의 canonical V1 consumer profile은 외부 저장소를 import하거나 실행하지 않는 로컬 fixture입니다. 현재 `pi-cmux-presence`와 `pi-herdr-presence`의 ready ID·capability 광고를 그대로 고정하고, 각각 consumer-first와 요청을 먼저 시작한 producer-first 발견/광고/replay 흐름에 넣습니다. 두 profile 모두 exact V1 update/remove shape, 기대한 세션 ID, 모든 설문 canary 문자열의 부재, 그리고 실제 질문 완료 뒤 remove가 한 번 발행되는지를 검증합니다. 이는 producer가 V1 계약을 지키는지에 관한 반복 가능하고 결정론적인 근거이며, 소비자 구현의 동작을 대체하지는 않습니다.
+`test/helpers/presence-consumer.ts`는 local fixture가 아니라 shared `@pi/presence` consumer handle을 실제 synchronous event-bus fanout에 연결합니다. 테스트는 consumer-first와 producer-first의 ask-user projection, concurrent pending 변화, source 점유 뒤 activation 재시도, session teardown과 stale token, throwing emitter, questionnaire 개인정보 canary를 확인합니다. entrypoint 테스트는 public tool 경유로 완료·사용자 취소·abort·동기 UI/factory 오류·비동기 거부·실행 중 session shutdown의 projection과 개인정보 canary를 확인합니다. shared parser·routing·registry와 protocol-specific lifecycle 검증은 shared package의 test suite가 소유합니다.
 
-### 라이브 연동 범위
+### 연동 경계
 
-이 검증은 fake TUI와 fake theme 및 위의 로컬 protocol fixture까지만 다룹니다. 실제 터미널 렌더링, 실제 테마 색상, 실행 중인 `pi-cmux-presence`·Herdr와의 연동, cmux 서버·socket·CLI·polling 동작은 검증하거나 구현하지 않습니다. 변경 후 실제 환경에서 확인할 항목은 좁은 터미널에서의 줄바꿈, 편집기 커서 표시, 설치된 presence 소비자가 있을 때의 알림 동작입니다.
+이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다.
 
 ## 관련 문서
 
