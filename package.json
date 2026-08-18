@@ -1,7 +1,7 @@
 {
   "name": "pi-ask-user",
   "version": "0.1.0",
-  "description": "Interactive questionnaire tool for Pi. Asks single or multiple option questions in the TUI with optional custom input and process-local presence.",
+  "description": "Interactive questionnaire tool for Pi. Asks single or multiple option questions in the TUI with optional custom input and process-local V2 presence.",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -67,5 +67,8 @@
     "@types/node": "^26.0.1",
     "typebox": "1.1.38",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@pi/presence": "github:spi-ca/pi-presence#v2-20260818-2"
   }
 }

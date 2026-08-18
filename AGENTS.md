@@ -41,8 +41,9 @@ not cover.
   `src/component.ts`. Do not move state transitions into the component.
 - Validate untrusted tool arguments in `src/questions.ts` before opening any
   UI, and return error strings instead of throwing.
-- Presence is observer-only. It must never fail, delay, or gate a question, and
-  must never carry question, option, or answer content.
+- Presence is observer-only. It uses the shared `@pi/presence` producer, must
+  never fail, delay, or gate a question, and must never carry question, option,
+  answer, cancel reason, or session ID content.
 - Language follows the reader. Docs written for people — `README.md` and
   `docs/*.md` — are Korean. Docs written for agents — this file — are English.
   Match the surrounding document instead of mixing languages.
