@@ -20,7 +20,7 @@ Pi extension을 포함한 제3자 패키지는 **full system access**로 실행�
 
 ```bash
 # 전역 설치
-pi install git:github.com/spi-ca/pi-ask-user
+pi install git:github.com/spi-ca/pi-ask-user@a0ecc31
 
 # 제거
 pi remove git:github.com/spi-ca/pi-ask-user
@@ -29,7 +29,7 @@ pi remove git:github.com/spi-ca/pi-ask-user
 프로젝트에만 설치하려면 프로젝트 루트에서 `-l`을 붙입니다.
 
 ```bash
-pi install -l git:github.com/spi-ca/pi-ask-user
+pi install -l git:github.com/spi-ca/pi-ask-user@a0ecc31
 ```
 
 ### 로컬 경로 설치·개발
@@ -143,7 +143,7 @@ bun run ci
 bun pm pack --dry-run
 ```
 
-`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 shared consumer handle과 실제 in-process event-bus fanout으로 ask-user lifecycle projection, source 재활성화, teardown, observer 오류 격리, 개인정보 canary를 검증합니다. public `ask_user` 등록·schema·결과·취소·답변 UI 계약과 완료·사용자 취소·abort·UI 오류·실행 중 session shutdown도 entrypoint 테스트로 유지 확인합니다. `@pi/presence`는 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
+`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 shared consumer handle과 실제 in-process event-bus fanout으로 ask-user lifecycle projection, source 재활성화, teardown, observer 오류 격리, 개인정보 canary를 검증합니다. `questions.test.ts`는 선택된 TypeBox 스키마 제약을 확인하며, entrypoint 테스트는 public `ask_user` 등록·runtime 경로(결과·취소·답변 UI 계약, 완료·사용자 취소·abort·UI 오류·실행 중 session shutdown)를 확인합니다. `@pi/presence`는 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
 
 ## 라이선스
 

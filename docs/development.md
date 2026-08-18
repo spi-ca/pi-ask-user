@@ -29,7 +29,7 @@ src/keys.ts             — Pi 키 바인딩 해석과 기본값 대체
 src/component.ts        — 상태 머신을 Pi TUI에 연결하는 키 처리·편집기·테마 렌더링
 src/presence.ts         — 선택적 process-local presence producer
 src/tool.ts             — ask_user 도구 등록, 결과 형성, 취소 처리
-test/questions.test.ts  — 정규화, 기본값·범위·크기 제한, 오류 메시지, 스키마 제약 테스트
+test/questions.test.ts  — 정규화, 기본값·범위·크기 제한, 오류 메시지, 선택된 스키마 제약 테스트
 test/sanitize.test.ts   — 표시 문자열 정제와 code-point 절단 테스트
 test/state.test.ts      — 탭·커서·필터·다중 선택·자유 입력·단발 확정 상태 전이 테스트
 test/render.test.ts     — 폭 경계, 뷰포트, 들여쓰기, 옵션·요약·도움말 문자열 테스트
@@ -70,7 +70,7 @@ docs/                   — 주제별 문서
 
 ## 검증 범위
 
-`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, typebox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, ask-user presence projection·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다.
+`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, 선택된 TypeBox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, ask-user presence projection·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다. 이 목록은 실행되는 테스트의 대표 범위이며, 측정되었거나 완전한 커버리지를 뜻하지 않습니다.
 
 ### 결정론적 protocol 검증
 

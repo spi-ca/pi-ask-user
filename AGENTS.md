@@ -24,9 +24,9 @@ bun install --frozen-lockfile
 bun run ci
 ```
 
-`bun run ci` runs `bun run check` (type check via `tsc --noEmit`) followed by
-`bun test`, and is the required check before treating a change as verified.
-`bun run test` and `bun run check` also exist individually. See
+`bun run ci` runs `bun run lint`, `bun run check` (type check via `tsc --noEmit`),
+and `bun test` in that order, and is the required check before treating a change as
+verified. `bun run lint`, `bun run test`, and `bun run check` also exist individually. See
 [`docs/development.md`](docs/development.md) for what the suite does and does
 not cover.
 
