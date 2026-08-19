@@ -49,6 +49,15 @@ type CustomFactory<T> = (
   done: (result: T) => void,
 ) => CustomComponent;
 
+function questionsProxyWithLength(length: unknown): unknown[] {
+  return new Proxy([], {
+    get(target, property, receiver) {
+      if (property === "length") return length;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 function register() {
   const hooks: string[] = [];
   const events: string[] = [];
@@ -506,6 +515,49 @@ test("renderCall summarizes the question count and labels", () => {
   const empty = tool.renderCall({}, fakeTheme(), {}) as { text: string };
   expect(empty.text).toContain("0 questions");
   expect(empty.text).not.toContain("(");
+});
+
+test("renderCall fails closed for throwing getters and revoked proxies", () => {
+  const { tool } = register();
+  const throwingQuestions = Object.defineProperty({}, "questions", {
+    get() {
+      throw new Error("malformed arguments");
+    },
+  });
+  const arrayProxy = Proxy.revocable([], {});
+  const questionProxy = Proxy.revocable({}, {});
+  arrayProxy.revoke();
+  questionProxy.revoke();
+
+  const getterResult = tool.renderCall(throwingQuestions, fakeTheme(), {}) as { text: string };
+  const proxyResult = tool.renderCall({ questions: arrayProxy.proxy }, fakeTheme(), {}) as { text: string };
+  const questionProxyResult = tool.renderCall({ questions: [questionProxy.proxy] }, fakeTheme(), {}) as {
+    text: string;
+  };
+
+  expect(getterResult.text).toContain("0 questions");
+  expect(getterResult.text).not.toContain("(");
+  expect(proxyResult.text).toContain("0 questions");
+  expect(proxyResult.text).not.toContain("(");
+  expect(questionProxyResult.text).toContain("0 questions");
+  expect(questionProxyResult.text).not.toContain("(");
+});
+
+test("renderCall fails closed for questions proxies with malformed lengths", () => {
+  const { tool } = register();
+  const throwingLength = {
+    valueOf() {
+      throw new Error("length coercion must not run");
+    },
+  };
+
+  for (const length of [Symbol("length"), throwingLength]) {
+    const result = tool.renderCall({ questions: questionsProxyWithLength(length) }, fakeTheme(), {}) as {
+      text: string;
+    };
+    expect(result.text).toContain("0 questions");
+    expect(result.text).not.toContain("(");
+  }
 });
 
 test("renderResult marks answers, free text, skips, and cancellation", () => {

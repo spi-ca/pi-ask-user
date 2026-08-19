@@ -621,14 +621,15 @@ test("answers are returned in question order regardless of answer order", () => 
   expect(state.answersInQuestionOrder().map((answer) => answer.id)).toEqual(["a", "c"]);
 });
 
-test("revision advances only on state mutations", () => {
+test("cursor movement reports and revises only when its visible row changes", () => {
   const target = question();
   const { state } = makeState([target]);
 
   const initial = state.revision;
-  state.moveCursor(0);
+  expect(state.moveCursor(0)).toBe(false);
+  expect(state.moveCursor(-1)).toBe(false);
   expect(state.revision).toBe(initial);
 
-  state.moveCursor(1);
+  expect(state.moveCursor(1)).toBe(true);
   expect(state.revision).toBeGreaterThan(initial);
 });

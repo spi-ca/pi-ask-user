@@ -156,12 +156,14 @@ export class QuestionnaireState {
     });
   }
 
-  moveCursor(delta: number): void {
+  /** Move the cursor, reporting whether its visible row changed. */
+  moveCursor(delta: number): boolean {
     const options = this.currentOptions();
     const next = Math.min(Math.max(0, this.optionIndex + delta), Math.max(0, options.length - 1));
-    if (next === this.optionIndex) return;
+    if (next === this.optionIndex) return false;
     this.optionIndex = next;
     this.touch();
+    return true;
   }
 
   /** Place the cursor on a visible row, ignoring out-of-range targets. */

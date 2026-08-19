@@ -8,7 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { createQuestionnaireComponent, type QuestionnaireComponent } from "./component.ts";
 import { AskUserPresence } from "./presence.ts";
-import { answerLabels, answerValues, normalizeQuestions, QuestionnaireParams } from "./questions.ts";
+import { answerLabels, answerValues, MAX_QUESTIONS, normalizeQuestions, QuestionnaireParams } from "./questions.ts";
 import { answerPrefix } from "./render.ts";
 import { sanitizeDisplayText } from "./sanitize.ts";
 import type { Answer, CancelReason, Question, QuestionnaireResult } from "./types.ts";
@@ -88,36 +88,88 @@ export function formatCancelledText(result: QuestionnaireResult): string {
   return answered ? `${header}\nAnswered so far:\n${answered}` : header;
 }
 
+type CallLabelCount = number | `${number}+`;
+
+type RawCallQuestion = { id?: unknown; label?: unknown; prompt?: unknown };
+
+/** Read one raw question label without letting malformed accessors break rendering. */
+function rawQuestionLabel(question: RawCallQuestion): string | undefined {
+  try {
+    const label = question.label;
+    if (typeof label === "string") return label;
+    const id = question.id;
+    if (typeof id === "string") return id;
+    const prompt = question.prompt;
+    if (typeof prompt === "string") return prompt;
+    return "Question";
+  } catch {
+    // Do not count an entry whose object shape cannot be safely inspected.
+    return undefined;
+  }
+}
+
 /**
  * Question labels shown in the collapsed tool-call line.
  *
- * This runs on raw arguments before normalization, so it caps how much it reads
- * and sanitizes what it keeps.
+ * This runs on raw arguments before normalization. Schema-valid calls have at
+ * most `MAX_QUESTIONS` entries, so inspecting only that many preserves their
+ * output while keeping malformed oversized arrays bounded.
  */
-export function callLabels(args: unknown): { count: number; labels: string } {
-  const rawQuestions =
-    args && typeof args === "object" && Array.isArray((args as { questions?: unknown }).questions)
-      ? (args as { questions: unknown[] }).questions
-      : [];
-  const questions = rawQuestions.filter(
-    (question): question is { id?: unknown; label?: unknown; prompt?: unknown } =>
-      question !== null && typeof question === "object",
-  );
-  const labels = questions
-    .slice(0, MAX_CALL_LINE_LABELS)
-    .map((question) =>
-      typeof question.label === "string"
-        ? question.label
-        : typeof question.id === "string"
-          ? question.id
-          : typeof question.prompt === "string"
-            ? question.prompt
-            : "Question",
-    )
-    .map((label) => sanitizeDisplayText(label, MAX_CALL_LINE_LABEL_LENGTH))
-    .join(", ");
-  const suffix = questions.length > MAX_CALL_LINE_LABELS ? ", …" : "";
-  return { count: questions.length, labels: labels ? `${labels}${suffix}` : "" };
+export function callLabels(args: unknown): { count: CallLabelCount; labels: string } {
+  if (!args || typeof args !== "object") return { count: 0, labels: "" };
+
+  let rawQuestions: unknown[];
+  let rawQuestionCount: number;
+  try {
+    const questions = (args as { questions?: unknown }).questions;
+    if (!Array.isArray(questions)) return { count: 0, labels: "" };
+
+    rawQuestions = questions;
+    const questionCount: unknown = rawQuestions.length;
+    if (
+      typeof questionCount !== "number" ||
+      !Number.isFinite(questionCount) ||
+      !Number.isInteger(questionCount) ||
+      !Number.isSafeInteger(questionCount) ||
+      questionCount < 0
+    ) {
+      return { count: 0, labels: "" };
+    }
+    rawQuestionCount = questionCount;
+  } catch {
+    return { count: 0, labels: "" };
+  }
+
+  const oversized = rawQuestionCount > MAX_QUESTIONS;
+  const inspectionCount = Math.min(rawQuestionCount, MAX_QUESTIONS);
+  const labels: string[] = [];
+  let count = 0;
+
+  for (let index = 0; index < inspectionCount; index++) {
+    let question: unknown;
+    try {
+      question = rawQuestions[index];
+    } catch {
+      continue;
+    }
+    if (question === null || typeof question !== "object") continue;
+
+    const label = rawQuestionLabel(question as RawCallQuestion);
+    if (label === undefined) continue;
+    count += 1;
+    if (labels.length >= MAX_CALL_LINE_LABELS) continue;
+    labels.push(sanitizeDisplayText(label, MAX_CALL_LINE_LABEL_LENGTH));
+  }
+
+  const hasMoreLabels = oversized || count > MAX_CALL_LINE_LABELS;
+  const joinedLabels = labels.join(", ");
+  const suffix = joinedLabels && hasMoreLabels ? ", …" : "";
+  return {
+    // Entries beyond the inspection cap are untrusted: report only the object
+    // entries actually observed rather than assuming all capped slots qualify.
+    count: oversized ? `${count}+` : count,
+    labels: `${joinedLabels}${suffix}`,
+  };
 }
 
 export function registerAskUserTool(pi: ExtensionAPI): void {

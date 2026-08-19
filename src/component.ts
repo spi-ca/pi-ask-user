@@ -301,13 +301,11 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
     const options = state.currentOptions();
 
     if (keys.matches(data, "up")) {
-      state.moveCursor(-1);
-      refresh();
+      if (state.moveCursor(-1)) refresh();
       return;
     }
     if (keys.matches(data, "down")) {
-      state.moveCursor(1);
-      refresh();
+      if (state.moveCursor(1)) refresh();
       return;
     }
 
