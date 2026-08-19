@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { MAX_QUESTIONS } from "../src/questions.ts";
 import {
   CANCELLED_MESSAGE,
   callLabels,
@@ -14,6 +15,15 @@ import { makeQuestion } from "./helpers/question.ts";
 
 function question(overrides: Partial<Question> = {}): Question {
   return makeQuestion({ options: [{ value: "ko", label: "Korean" }], ...overrides });
+}
+
+function questionsProxyWithLength(length: unknown): unknown[] {
+  return new Proxy([], {
+    get(target, property, receiver) {
+      if (property === "length") return length;
+      return Reflect.get(target, property, receiver);
+    },
+  });
 }
 
 test("errorResult reports the message as a cancelled questionnaire", () => {
@@ -138,6 +148,75 @@ test("callLabels sanitizes unvalidated arguments before display", () => {
   expect([...callLabels({ questions: [{ label: "L".repeat(200) }] }).labels].length).toBe(MAX_CALL_LINE_LABEL_LENGTH);
 });
 
+test("callLabels fails closed when the questions getter throws", () => {
+  const args = Object.defineProperty({}, "questions", {
+    get() {
+      throw new Error("malformed arguments");
+    },
+  });
+
+  expect(callLabels(args)).toEqual({ count: 0, labels: "" });
+});
+
+test("callLabels skips an inspected slot getter that throws", () => {
+  const questions: unknown[] = [];
+  Object.defineProperty(questions, 0, {
+    get() {
+      throw new Error("malformed question");
+    },
+  });
+  questions.length = 1;
+
+  expect(callLabels({ questions })).toEqual({ count: 0, labels: "" });
+});
+
+test("callLabels skips a question without reading later fields when a getter throws", () => {
+  let idReads = 0;
+  const question = Object.defineProperties(
+    {},
+    {
+      label: {
+        get() {
+          throw new Error("malformed label");
+        },
+      },
+      id: {
+        get() {
+          idReads += 1;
+          return "id";
+        },
+      },
+    },
+  );
+
+  expect(callLabels({ questions: [question] })).toEqual({ count: 0, labels: "" });
+  expect(idReads).toBe(0);
+});
+
+test("callLabels fails closed for revoked question and questions proxies", () => {
+  const questionProxy = Proxy.revocable({}, {});
+  const questionsProxy = Proxy.revocable([], {});
+  questionProxy.revoke();
+  questionsProxy.revoke();
+
+  expect(callLabels({ questions: [questionProxy.proxy] })).toEqual({ count: 0, labels: "" });
+  expect(callLabels({ questions: questionsProxy.proxy })).toEqual({ count: 0, labels: "" });
+});
+
+test("callLabels fails closed for a questions proxy with a Symbol length", () => {
+  expect(callLabels({ questions: questionsProxyWithLength(Symbol("length")) })).toEqual({ count: 0, labels: "" });
+});
+
+test("callLabels fails closed for a questions proxy with a coercion-throwing length", () => {
+  const throwingLength = {
+    valueOf() {
+      throw new Error("length coercion must not run");
+    },
+  };
+
+  expect(callLabels({ questions: questionsProxyWithLength(throwingLength) })).toEqual({ count: 0, labels: "" });
+});
+
 test("callLabels elides once past the label cap but still counts everything", () => {
   const questions = Array.from({ length: MAX_CALL_LINE_LABELS + 5 }, (_unused, index) => ({ label: `Q${index}` }));
   const { count, labels } = callLabels({ questions });
@@ -145,4 +224,41 @@ test("callLabels elides once past the label cap but still counts everything", ()
   expect(count).toBe(MAX_CALL_LINE_LABELS + 5);
   expect(labels.endsWith(", …")).toBe(true);
   expect(labels.split(", ")).toHaveLength(MAX_CALL_LINE_LABELS + 1);
+});
+
+test("callLabels bounds oversized getter-backed arrays", () => {
+  const questions: unknown[] = [];
+  let reads = 0;
+  for (let index = 0; index < MAX_QUESTIONS; index++) {
+    Object.defineProperty(questions, index, {
+      get() {
+        reads += 1;
+        return { label: `Q${index}` };
+      },
+    });
+  }
+  questions.length = MAX_QUESTIONS + 1;
+  Object.defineProperty(questions, MAX_QUESTIONS, {
+    get() {
+      throw new Error("oversized input must not be read");
+    },
+  });
+
+  const { count, labels } = callLabels({ questions });
+
+  expect(reads).toBe(MAX_QUESTIONS);
+  expect(count).toBe(`${MAX_QUESTIONS}+`);
+  expect(labels).toBe(`${Array.from({ length: MAX_CALL_LINE_LABELS }, (_unused, index) => `Q${index}`).join(", ")}, …`);
+});
+
+test("callLabels does not count uninspected malformed oversized entries", () => {
+  const questions: unknown[] = Array.from({ length: MAX_QUESTIONS }, () => null);
+  questions.length = MAX_QUESTIONS + 1;
+  Object.defineProperty(questions, MAX_QUESTIONS, {
+    get() {
+      throw new Error("oversized input must not be read");
+    },
+  });
+
+  expect(callLabels({ questions })).toEqual({ count: "0+", labels: "" });
 });

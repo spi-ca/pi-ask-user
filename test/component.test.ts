@@ -81,13 +81,25 @@ test("arrow keys move the cursor and Enter selects the highlighted option", () =
   expect(settled[0]!.answers).toEqual([{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }]);
 });
 
-test("the cursor stops at both ends of the option list", () => {
-  const { component, settled } = mount([question()]);
+test("boundary cursor keys are consumed without rerendering or dropping cached lines", () => {
+  const { component, settled, tui } = mount([question({ allowOther: false })]);
+  const first = component.render(60);
+  const initialRenders = tui.renderCount();
 
   component.handleInput(UP);
+  expect(tui.renderCount()).toBe(initialRenders);
+  expect(component.render(60)).toBe(first);
+
+  component.handleInput(DOWN);
+  expect(tui.renderCount()).toBe(initialRenders + 1);
+  const last = component.render(60);
+
+  component.handleInput(DOWN);
+  expect(tui.renderCount()).toBe(initialRenders + 1);
+  expect(component.render(60)).toBe(last);
+
   component.handleInput(UP);
   component.handleInput(ENTER);
-
   expect(settled[0]!.answers[0]).toMatchObject({ value: "ko", index: 1 });
 });
 
