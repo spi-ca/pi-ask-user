@@ -20,7 +20,7 @@ Pi extension을 포함한 제3자 패키지는 **full system access**로 실행�
 
 ```bash
 # 전역 설치
-pi install git:github.com/spi-ca/pi-ask-user@a0ecc31
+pi install git:github.com/spi-ca/pi-ask-user@v20260818-1
 
 # 제거
 pi remove git:github.com/spi-ca/pi-ask-user
@@ -29,7 +29,7 @@ pi remove git:github.com/spi-ca/pi-ask-user
 프로젝트에만 설치하려면 프로젝트 루트에서 `-l`을 붙입니다.
 
 ```bash
-pi install -l git:github.com/spi-ca/pi-ask-user@a0ecc31
+pi install -l git:github.com/spi-ca/pi-ask-user@v20260818-1
 ```
 
 ### 로컬 경로 설치·개발
