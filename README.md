@@ -12,7 +12,7 @@ Pi TUI에서 사용자에게 선택형 질문을 하고 구조화된 답변을 �
 - **긴 목록 탐색** — 화면 높이에 맞는 옵션 창, `↑ N more`/`↓ N more` 표시, `/` 필터, 숫자 바로 선택을 제공합니다.
 - **구조화된 결과** — 도구 결과의 `details`에 정규화된 질문, 답변 종류(`single`/`multi`/`custom`/`skipped`), 취소 사유를 담아 반환합니다. 텍스트 결과에는 모델이 사용할 기계값도 표시합니다.
 - **안전한 표시** — 모델이 제공한 표시 문자열과 라이브로 보이는 필터·자유 입력에서 제어·bidi 문자를 제거하고 길이를 제한한 뒤 렌더링합니다.
-- **선택적 presence** — 질문이 열려 있는 동안 shared [`@pi/presence`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)로 content-free `interaction` pending state를 발행하고 종료 시 철회합니다. 질문 내용·답변·취소 사유·세션 ID는 전송하지 않으며, shared protocol 규칙은 [`docs/configuration.md`](docs/configuration.md)의 immutable 링크를 따릅니다.
+- **선택적 presence** — 질문이 열려 있는 동안 shared [`@pi/presence`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)로 content-free `interaction` pending state를 발행하고 종료 시 철회합니다. 질문 내용·답변·취소 사유·세션 ID는 전송하지 않으며, shared protocol 규칙은 [`docs/configuration.md`](docs/configuration.md)의 immutable 링크를 따릅니다.
 
 ## 설치
 
@@ -37,7 +37,7 @@ pi install -l git:github.com/spi-ca/pi-ask-user@v20260818-1
 개발 중에는 현재 디렉터리를 로컬 패키지로 설치할 수 있습니다. Pi는 경로를 복사하지 않고 참조합니다.
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run ci
 pi install /absolute/path/to/pi-ask-user
 ```
@@ -143,7 +143,7 @@ bun run ci
 bun pm pack --dry-run
 ```
 
-`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 shared consumer handle과 실제 in-process event-bus fanout으로 ask-user lifecycle projection, source 재활성화, teardown, observer 오류 격리, 개인정보 canary를 검증합니다. `questions.test.ts`는 선택된 TypeBox 스키마 제약을 확인하며, entrypoint 테스트는 public `ask_user` 등록·runtime 경로(결과·취소·답변 UI 계약, 완료·사용자 취소·abort·UI 오류·실행 중 session shutdown)를 확인합니다. `@pi/presence`는 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
+`bun run ci`는 Biome lint, 타입 검사, 테스트를 순서대로 실행합니다. presence 테스트는 shared consumer handle과 실제 in-process event-bus fanout으로 ask-user lifecycle projection, source 재활성화, teardown, observer 오류 격리, 개인정보 canary를 검증합니다. `questions.test.ts`는 선택된 TypeBox 스키마 제약을 확인하며, entrypoint 테스트는 public `ask_user` 등록·runtime 경로(결과·취소·답변 UI 계약, 완료·사용자 취소·abort·UI 오류·실행 중 session shutdown)를 확인합니다. `@pi/presence`는 [`github:spi-ca/pi-presence#v2-20260828-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)에 정확히 고정합니다. 자세한 범위는 [`docs/development.md`](docs/development.md)를 참고하세요.
 
 ## 라이선스
 

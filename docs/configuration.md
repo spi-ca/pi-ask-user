@@ -15,7 +15,7 @@
 
 ## presence 연동
 
-질문이 열려 있는 동안 shared [`@pi/presence`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)의 `interaction` producer로 `ask_user` pending 상태를 발행하고, 마지막 요청이 끝나면 철회합니다. 이는 questionnaire의 lifecycle 권한이 아니며, 소비자 부재·전달 오류·producer 오류는 질문의 완료·취소·답변 결과에 영향을 주지 않습니다.
+질문이 열려 있는 동안 shared [`@pi/presence`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)의 `interaction` producer로 `ask_user` pending 상태를 발행하고, 마지막 요청이 끝나면 철회합니다. 이는 questionnaire의 lifecycle 권한이 아니며, 소비자 부재·전달 오류·producer 오류는 질문의 완료·취소·답변 결과에 영향을 주지 않습니다.
 
 이 패키지는 도구가 실제로 대기 중인지만 projection합니다.
 
@@ -25,9 +25,9 @@
 
 공유 channel 이름, 이벤트 schema와 parser, ordinal 상한, retained replay, consumer epoch, generation/sequence fence, registry와 producer/consumer API의 규범은 이 저장소가 복제하지 않습니다. 다음 immutable 문서를 단일 출처로 사용합니다.
 
-- [protocol](https://github.com/spi-ca/pi-presence/blob/v2-20260818-2/docs/protocol.md) — 이벤트 계약과 검증·전달 규칙
-- [lifecycle](https://github.com/spi-ca/pi-presence/blob/v2-20260818-2/docs/lifecycle.md) — producer/consumer lifecycle과 replay·fence 규칙
-- [API](https://github.com/spi-ca/pi-presence/blob/v2-20260818-2/docs/api.md) — handle 생성·활성화·발행·철회 API
+- [protocol](https://github.com/spi-ca/pi-presence/blob/v2-20260828-1/docs/protocol.md) — 이벤트 계약과 검증·전달 규칙
+- [lifecycle](https://github.com/spi-ca/pi-presence/blob/v2-20260828-1/docs/lifecycle.md) — producer/consumer lifecycle과 replay·fence 규칙
+- [API](https://github.com/spi-ca/pi-presence/blob/v2-20260828-1/docs/api.md) — handle 생성·활성화·발행·철회 API
 
 ## 개인정보 범위
 
@@ -39,7 +39,7 @@
 - 이 패키지는 polling, socket, CLI, process 실행, persistent connection, background daemon을 만들지 않습니다.
 - shared protocol parser나 compatibility fallback을 구현하지 않습니다.
 
-의존성은 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다. version range나 로컬 path dependency로 바꾸지 않아 연동 패키지의 계약이 갈라지지 않게 합니다.
+의존성은 [`github:spi-ca/pi-presence#v2-20260828-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)에 정확히 고정합니다. version range나 로컬 path dependency로 바꾸지 않아 연동 패키지의 계약이 갈라지지 않게 합니다.
 
 ## 관련 문서
 

@@ -2,10 +2,10 @@
 
 ## 도구와 타입 경로
 
-이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성 범위는 `^0.84.1`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
+이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.84.4`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run lint
 bun run lint:fix
 bun run check
@@ -78,7 +78,7 @@ docs/                   — 주제별 문서
 
 ### 연동 경계
 
-이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260818-2`](https://github.com/spi-ca/pi-presence/tree/v2-20260818-2)에 정확히 고정합니다.
+이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260828-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)에 정확히 고정합니다.
 
 ## 관련 문서
 
