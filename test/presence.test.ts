@@ -14,7 +14,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
 
-function fakeCtx(sessionId: string | (() => string)): ExtensionContext {
+function fakeCtx(sessionId: string | null | (() => string | null)): ExtensionContext {
   return {
     sessionManager: {
       getSessionId: () => (typeof sessionId === "function" ? sessionId() : sessionId),
@@ -136,7 +136,7 @@ test("each interaction lifecycle uses a higher generation and resets its sequenc
   ]);
 });
 
-test("session replacement fences stale tokens, withdraws, and activates a fresh producer", () => {
+test("session-start replacement fences stale pending tokens and activates a fresh producer", () => {
   const bus = createEventBus();
   const consumer = attachV2Consumer(bus);
   cleanups.push(() => consumer.deactivate());
@@ -144,6 +144,7 @@ test("session replacement fences stale tokens, withdraws, and activates a fresh 
   presence.startSession(fakeCtx("s1"));
 
   const stale = presence.beginRequest(fakeCtx("s1"));
+  presence.startSession(fakeCtx("s2"));
   const fresh = presence.beginRequest(fakeCtx("s2"));
   presence.finishRequest(stale);
   presence.finishRequest(fresh);
@@ -153,6 +154,54 @@ test("session replacement fences stale tokens, withdraws, and activates a fresh 
     [1, 2],
     [2, 1],
     [2, 2],
+  ]);
+});
+
+function expectPendingSessionStartReplacement(ctx: ExtensionContext): void {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+
+  presence.startSession(ctx);
+  const stale = presence.beginRequest(ctx);
+  presence.startSession(ctx);
+  const fresh = presence.beginRequest(ctx);
+  expect(fresh.epoch).toBeGreaterThan(stale.epoch);
+  presence.finishRequest(stale);
+  presence.finishRequest(fresh);
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [2, 2],
+  ]);
+}
+
+test("consecutive session starts with the same identity replace the pending lifecycle", () => {
+  expectPendingSessionStartReplacement(fakeCtx("s1"));
+});
+
+test("consecutive session starts without an identity replace the pending lifecycle", () => {
+  expectPendingSessionStartReplacement(fakeCtx(null));
+});
+
+test("a callback from another identity is fenced without replacing the active lifecycle", () => {
+  const bus = createEventBus();
+  const consumer = attachV2Consumer(bus);
+  cleanups.push(() => consumer.deactivate());
+  const presence = start(bus);
+  presence.startSession(fakeCtx("s1"));
+
+  const active = presence.beginRequest(fakeCtx("s1"));
+  const fenced = presence.beginRequest(fakeCtx("stale"));
+  presence.finishRequest(fenced);
+  presence.finishRequest(active);
+
+  expect(consumer.received.map((event) => [event.generation, event.sequence])).toEqual([
+    [1, 1],
+    [1, 2],
   ]);
 });
 
