@@ -25,14 +25,9 @@ export class AskUserPresence {
 
   constructor(private readonly pi: ExtensionAPI) {}
 
-  /** A session always owns a fresh shared-protocol producer handle. */
+  /** Every session-start notification owns a fresh producer lifecycle. */
   startSession(ctx: ExtensionContext): void {
-    const identity = this.readSessionIdentity(ctx);
-    if (!this.sessionStarted || identity !== this.sessionIdentity) {
-      this.replaceSession(identity);
-    } else {
-      this.retryActivation();
-    }
+    this.replaceSession(this.readSessionIdentity(ctx));
   }
 
   /** Withdraw the current lifecycle before releasing its source ownership. */
@@ -50,8 +45,12 @@ export class AskUserPresence {
   /** Claim one pending-input slot. The returned token fences a later finish. */
   beginRequest(ctx: ExtensionContext): PresenceRequestToken {
     const identity = this.readSessionIdentity(ctx);
-    if (!this.sessionStarted || identity !== this.sessionIdentity) {
+    if (!this.sessionStarted) {
       this.replaceSession(identity);
+    } else if (identity !== this.sessionIdentity) {
+      // Only session_start may replace a lifecycle. A callback from another
+      // identity is inert, so it cannot attach to or disturb the active session.
+      return { epoch: -1 };
     } else {
       // A source collision is temporary. Retrying must not replace the session,
       // since replacement would invalidate still-pending request tokens.
@@ -68,7 +67,7 @@ export class AskUserPresence {
     return token;
   }
 
-  /** Release one slot. Stale tokens from a replaced session are ignored. */
+  /** Release one slot. Stale or fenced tokens cannot affect the active session. */
   finishRequest(token: PresenceRequestToken): void {
     if (token.epoch !== this.epoch || this.pendingRequests === 0) return;
     this.pendingRequests -= 1;
