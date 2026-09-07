@@ -120,7 +120,16 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
   const { questions, tui, done } = options;
   const theme = options.theme as ThemeLike;
   const keys: KeyResolver = createKeyResolver(options.keybindings);
-  const state = new QuestionnaireState({ questions, onSettled: done });
+  // An explicitly empty submit binding may use Enter for another editor action
+  // (notably a newline). Do not open a free-text editor without a working
+  // submit key; preserve the normalized questions in the returned details.
+  const interactiveQuestions = keys.canSubmit()
+    ? questions
+    : questions.map((question) => ({ ...question, allowOther: false }));
+  const state = new QuestionnaireState({
+    questions: interactiveQuestions,
+    onSettled: (result) => done({ ...result, questions }),
+  });
 
   let focused = false;
   let cachedLines: string[] | undefined;
@@ -198,6 +207,16 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
       refresh();
       return;
     }
+    // The embedded Editor does not receive the custom component's keybinding
+    // manager. Dispatch the resolved submit action ourselves, including the
+    // Enter fallback used when tui.input.submit is explicitly unbound.
+    if (keys.matches(data, "submit")) {
+      editor.onSubmit?.(editor.getText());
+      return;
+    }
+    // Do not let Editor's built-in Enter handler contradict a configured
+    // non-Enter submit binding that the surrounding component advertises.
+    if (matchesKey(data, Key.enter)) return;
 
     const before = editor.getText();
     editor.handleInput(data);

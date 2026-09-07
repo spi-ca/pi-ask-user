@@ -322,7 +322,7 @@ test("a completed questionnaire returns labeled text and structured details", as
   const { tool } = register();
   const result = await tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, tuiContext(["\u001b[B", "\r"]));
 
-  expect(result.content[0]!.text).toBe("Language: English [en]");
+  expect(result.content[0]!.text).toBe('Language: English ["en"]');
   const details = result.details as QuestionnaireResult;
   expect(details.cancelled).toBe(false);
   expect(details.answers).toEqual([{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }]);
@@ -332,7 +332,7 @@ test("digit keys select an option directly", async () => {
   const { tool } = register();
   const result = await tool.execute("call-1", SINGLE_QUESTION, undefined, undefined, tuiContext(["2"]));
 
-  expect(result.content[0]!.text).toBe("Language: English [en]");
+  expect(result.content[0]!.text).toBe('Language: English ["en"]');
 });
 
 test("a cancelled questionnaire reports the reason and any partial answers", async () => {
