@@ -2,7 +2,7 @@
 
 ## 도구와 타입 경로
 
-이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.84.4`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
+이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.85.0`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
 
 ```bash
 bun install --frozen-lockfile
@@ -57,7 +57,8 @@ docs/                   — 주제별 문서
 - 취소는 순서에 의존하지 않아야 합니다. abort가 컴포넌트 mount 전에 도착해도 취소로 수렴해야 하고, 컴포넌트는 그대로 반환해 host가 정리할 수 있어야 합니다.
 - `id`는 공백 제거 후 비교·저장합니다. 다른 사용자 제공 문자열은 자동으로 `trim`하지 않습니다. 예외는 저장 시점의 자유 입력 답변입니다.
 - 렌더 결과는 요청한 폭을 넘지 않아야 합니다. 새 표시 문자열을 추가하면 `wrapLines`/`wrapLinesWithPrefix`를 통과시킵니다. 옵션 뷰포트는 터미널 높이에서 3–10행으로 계산합니다.
-- 렌더 캐시는 폭과 상태 revision을 함께 키로 씁니다. 새 상태를 추가하면 변경 시 `revision`이 증가하도록 합니다.
+- 렌더 캐시는 폭·상태 revision·터미널 행 수를 함께 키로 씁니다. 렌더 라인, 옵션/탭 hit region, editor region은 반드시 같은 generation에서 만들고 invalidate 시 함께 폐기합니다. 새 상태를 추가하면 변경 시 `revision`이 증가하도록 합니다.
+- fullscreen mouse는 label/description과 탭의 실제 cell region만 처리합니다. 옵션 위 휠은 경계에서도 소비하고, editor region은 local 좌표로 `Editor.handleMouse`에 전달합니다. 클릭으로 편집을 벗어날 때는 editor buffer와 editing state를 함께 비웁니다.
 - 사용 가능한 `KeybindingsManager`가 있으면 `tui.select.up`/`down`/`confirm`/`cancel` 바인딩이 권위 있습니다. 관리자가 바인딩하지 않은 키는 동작하지 않으며, 관리자 부재·오류와 "해당 동작에 바인딩된 키가 하나도 없는 경우"에만 기본 키로 대체합니다. 마지막 예외는 모달 프롬프트에서 확인 키가 사라져 답변이 불가능해지는 상황을 막기 위한 것이고, 이때 도움말도 대체한 키를 표시해 표시와 동작을 일치시켜야 합니다.
 - 자유 입력 편집기는 `tui.select.confirm`이 아니라 `tui.input.submit`으로 제출합니다. 편집기 도움말은 실제로 제출되는 키를 표시해야 합니다.
 - 편집·필터 중이 아닌 질문 화면의 `Esc`는 바인딩 설정과 무관하게 항상 설문을 취소하는 escape hatch여야 합니다.
@@ -70,7 +71,7 @@ docs/                   — 주제별 문서
 
 ## 검증 범위
 
-`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, 선택된 TypeBox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, ask-user presence projection·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다. 이 목록은 실행되는 테스트의 대표 범위이며, 측정되었거나 완전한 커버리지를 뜻하지 않습니다.
+`bun run ci`는 먼저 `biome check .`로 lint를 실행한 뒤, 입력 정규화와 오류 메시지·크기 제한·기본값·선택 범위, 선택된 TypeBox 스키마 제약, 표시 문자열 정제와 code-point 절단, 탭·커서·필터·뷰포트·다중 선택·자유 입력 상태 전이, 단발 확정, 폭 경계와 들여쓰기, 옵션·요약·도움말 문자열, 키보드와 fullscreen mouse(옵션·설명·탭 click/press, 휠, editor forwarding, resize hit cache) 동작, 사용자 키 바인딩과 기본값 대체, 실제 `pi-tui` 편집기를 사용한 키 입력·렌더 출력, ask-user presence projection·실패 격리·개인정보 canary, 도구 등록 표면과 비대화형·완료·취소·abort 경로, 호출·결과 렌더러를 실행합니다. 이 목록은 실행되는 테스트의 대표 범위이며, 측정되었거나 완전한 커버리지를 뜻하지 않습니다.
 
 ### 결정론적 protocol 검증
 

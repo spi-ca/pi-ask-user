@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { createQuestionnaireComponent } from "../src/component.ts";
+import { createQuestionnaireComponent, type QuestionnaireComponent } from "../src/component.ts";
 import type { Question, QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
 import { makeOptions, makeQuestion } from "./helpers/question.ts";
@@ -25,13 +25,13 @@ function question(overrides: Partial<Question> = {}): Question {
   });
 }
 
-function mount(questions: Question[], options: { rows?: number; keybindings?: unknown } = {}) {
+function mount(questions: Question[], options: { rows?: number; keybindings?: unknown; theme?: unknown } = {}) {
   const tui = fakeTui(80, options.rows ?? 40);
   const settled: QuestionnaireResult[] = [];
   const component = createQuestionnaireComponent({
     questions,
     tui: tui as never,
-    theme: fakeTheme(),
+    theme: options.theme ?? fakeTheme(),
     keybindings: options.keybindings,
     done: (result) => settled.push(result),
   });
@@ -753,6 +753,305 @@ test("focus is tracked and mirrored to the editor", () => {
   expect(component.focused).toBe(true);
   component.focused = false;
   expect(component.focused).toBe(false);
+});
+
+function mouse(
+  component: { handleMouse(event: Parameters<QuestionnaireComponent["handleMouse"]>[0]): unknown },
+  type: "press" | "release" | "drag" | "click" | "wheel",
+  x: number,
+  y: number,
+  options: { button?: "left" | "middle" | "right" | "none"; width?: number; wheelDelta?: number } = {},
+) {
+  return component.handleMouse({
+    type,
+    button: options.button ?? (type === "wheel" ? "none" : "left"),
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width: options.width ?? 60,
+    height: 40,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...(options.wheelDelta === undefined ? {} : { wheelDelta: options.wheelDelta }),
+  });
+}
+
+function lineIndex(lines: string[], text: string): number {
+  const index = lines.findIndex((line) => line.includes(text));
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
+function cellX(line: string, text: string): number {
+  const index = line.indexOf(text);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return visibleWidth(line.slice(0, index));
+}
+
+test("mouse press moves an option cursor and click selects its semantic row", () => {
+  const { component, settled, lines } = mount([question()]);
+  const koreanY = lineIndex(lines(), "1. Korean");
+  const englishY = lineIndex(lines(), "2. English");
+
+  expect(mouse(component, "press", 3, koreanY)).toEqual({ handled: true, focus: true, render: false });
+  expect(mouse(component, "press", 3, englishY)).toMatchObject({ handled: true, focus: true });
+  expect(settled).toHaveLength(0);
+  expect(lines().join("\n")).toContain("> 2. English");
+
+  mouse(component, "click", 3, englishY);
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "en" });
+});
+
+test("mouse description hits wrapped option regions and multi click only toggles", () => {
+  const wrapped = mount([
+    question({
+      options: [
+        { value: "ko", label: "Korean", description: "a wrapped description that spans several terminal lines" },
+      ],
+      allowOther: false,
+    }),
+  ]);
+  const descriptionY = lineIndex(wrapped.lines(24), "description");
+  mouse(wrapped.component, "click", 5, descriptionY, { width: 24 });
+  expect(wrapped.settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+
+  const narrow = mount([
+    question({
+      options: [{ value: "ko", label: "Korean", description: "description" }],
+      allowOther: false,
+    }),
+  ]);
+  const narrowLines = narrow.lines(3);
+  const narrowDescriptionY = lineIndex(narrowLines, "des");
+  mouse(narrow.component, "click", cellX(narrowLines[narrowDescriptionY]!, "des"), narrowDescriptionY, { width: 3 });
+  expect(narrow.settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+
+  const multi = mount([question({ multiSelect: true })]);
+  mouse(multi.component, "click", 4, lineIndex(multi.lines(), "1. Korean"));
+  expect(multi.settled).toHaveLength(0);
+  expect(multi.lines().join("\n")).toContain("> ☑ 1. Korean");
+});
+
+test("mouse Other and Skip activate their existing state transitions", () => {
+  const other = mount([question()]);
+  mouse(other.component, "click", 4, lineIndex(other.lines(), "Type something."));
+  expect(other.lines().join("\n")).toContain("Your answer:");
+
+  const skip = mount([question({ optional: true, allowOther: false })]);
+  mouse(skip.component, "click", 4, lineIndex(skip.lines(), "Skip this question."));
+  expect(skip.settled[0]!.answers).toEqual([{ id: "lang", kind: "skipped" }]);
+});
+
+test("a mouse tab click cancels custom editing before it navigates", () => {
+  const { component, lines } = mount([question({ id: "a", label: "A" }), question({ id: "b", label: "B" })]);
+  mouse(component, "click", 4, lineIndex(lines(), "Type something."));
+  type(component, "stale");
+  const tabY = lineIndex(lines(), "□ B");
+  mouse(component, "click", lines()[tabY]!.indexOf("B"), tabY);
+  expect(lines().join("\n")).not.toContain("Your answer:");
+  expect(lines().join("\n")).toContain("> 1. Korean");
+});
+
+test("CJK tab layout stays finite at narrow widths and hit cells navigate the intended question", () => {
+  const { component, settled, lines } = mount([
+    question({ id: "a", label: "가나다라마바사라마바사", prompt: "First question" }),
+    question({ id: "b", label: "둘", prompt: "Second question" }),
+  ]);
+
+  for (const width of [1, 2]) {
+    for (const line of lines(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
+
+  const width = 18;
+  const tabLines = lines(width);
+  const secondTabY = lineIndex(tabLines, "둘");
+  const secondTabX = cellX(tabLines[secondTabY]!, "둘");
+
+  expect(mouse(component, "press", secondTabX, secondTabY, { width })).toMatchObject({ handled: true, focus: true });
+  expect(lines(width).join("\n")).toContain("First question");
+  mouse(component, "click", secondTabX, secondTabY, { width });
+  expect(lines(width).join("\n")).toContain("Second question");
+  expect(settled).toHaveLength(0);
+
+  const submitLines = lines(width);
+  const submitY = lineIndex(submitLines, "Submit");
+  mouse(component, "click", cellX(submitLines[submitY]!, "Submit"), submitY, { width });
+  expect(lines(width).join("\n")).toContain("Unanswered:");
+  expect(settled).toHaveLength(0);
+});
+
+test("ANSI-styled tab geometry uses visible cells", () => {
+  const ansiTheme = {
+    fg: (_color: string, text: string) => `\u001b[36m${text}\u001b[0m`,
+    bg: (_color: string, text: string) => `\u001b[44m${text}\u001b[0m`,
+    bold: (text: string) => `\u001b[1m${text}\u001b[0m`,
+  };
+  const { component, lines } = mount(
+    [
+      question({ id: "a", label: "Alpha", prompt: "Alpha question" }),
+      question({ id: "b", label: "Beta", prompt: "Beta question" }),
+    ],
+    { theme: ansiTheme },
+  );
+  const width = 60;
+  const tabLines = lines(width);
+  const betaY = lineIndex(tabLines, "Beta");
+
+  mouse(component, "click", cellX(tabLines[betaY]!, "Beta"), betaY, { width });
+  expect(lines(width).join("\n")).toContain("Beta question");
+});
+
+test("drag, release, and non-left mouse buttons never activate options", () => {
+  const { component, settled, lines } = mount([question()]);
+  const y = lineIndex(lines(), "1. Korean");
+  expect(mouse(component, "drag", 3, y)).toBeUndefined();
+  expect(mouse(component, "release", 3, y)).toBeUndefined();
+  expect(mouse(component, "click", 3, y, { button: "right" })).toBeUndefined();
+  expect(settled).toHaveLength(0);
+});
+
+test("mouse wheel moves across the full option block and consumes its bounds", () => {
+  const { component, lines } = mount([question({ multiSelect: true, options: makeOptions(30), allowOther: false })], {
+    rows: 18,
+  });
+  const width = 60;
+  const y = lineIndex(lines(width), "1. OPT 1");
+
+  // The blank cells to the right of option text are part of the option block.
+  expect(mouse(component, "wheel", width - 1, y, { width, wheelDelta: -99 })).toEqual({ handled: true, render: false });
+  expect(mouse(component, "wheel", width - 1, y, { width, wheelDelta: 99 })).toEqual({ handled: true, render: true });
+  expect(lines(width).join("\n")).toContain("> ☐ 2. OPT 2");
+
+  // Overflow indicators share the block even though they are not option hits.
+  const overflowY = lineIndex(lines(width), "↓");
+  expect(mouse(component, "wheel", 1, overflowY, { width, wheelDelta: 99 })).toEqual({ handled: true, render: true });
+  expect(lines(width).join("\n")).toContain("> ☐ 3. OPT 3");
+
+  for (let index = 0; index < 20; index++) mouse(component, "wheel", 4, lineIndex(lines(), "> "), { wheelDelta: 1 });
+  expect(lines().join("\n")).toContain("↑");
+  expect(mouse(component, "wheel", 0, 0, { wheelDelta: 1 })).toBeUndefined();
+});
+
+test("mouse forwards editor clicks with local coordinates and parent focus", () => {
+  const { component, settled, lines } = mount([question()]);
+  mouse(component, "click", 4, lineIndex(lines(), "Type something."));
+  type(component, "abc");
+  const editorY = lineIndex(lines(), "abc");
+
+  expect(mouse(component, "click", 1, editorY)).toMatchObject({ handled: true, focus: true });
+  type(component, "X");
+  component.handleInput(ENTER);
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "Xabc" });
+});
+
+test("an editor press supersedes a stale option press and preserves cursor positioning", () => {
+  const { component, settled, lines } = mount([question()]);
+  mouse(component, "click", 4, lineIndex(lines(), "Type something."));
+  type(component, "abc");
+
+  const optionLines = lines();
+  const optionY = lineIndex(optionLines, "1. Korean");
+  mouse(component, "press", cellX(optionLines[optionY]!, "Korean"), optionY);
+
+  const editorY = lineIndex(lines(), "abc");
+  mouse(component, "press", 1, editorY);
+  expect(mouse(component, "click", 1, editorY)).toMatchObject({ handled: true, focus: true });
+  type(component, "X");
+  component.handleInput(ENTER);
+
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "Xabc" });
+});
+
+test("mouse geometry regenerates after width and terminal-row changes", () => {
+  const { component, settled, tui, lines } = mount([question({ options: makeOptions(10), allowOther: false })], {
+    rows: 40,
+  });
+  const width = 60;
+  const oldY = lineIndex(lines(width), "10. OPT 10");
+
+  // The old row is outside the new three-row viewport. A stale hit cache with
+  // the same width but stale terminal-row generation would select option ten.
+  tui.terminal.rows = 14;
+  expect(mouse(component, "click", 4, oldY, { width })).toBeUndefined();
+  expect(settled).toHaveLength(0);
+  expect(lines(width).every((line) => visibleWidth(line) <= width)).toBe(true);
+});
+
+test("an invalidated press cannot activate a newly rendered option", () => {
+  const { component, settled, lines } = mount([
+    question({ id: "a", label: "A", prompt: "First question" }),
+    question({ id: "b", label: "B", prompt: "Second question" }),
+  ]);
+  const width = 60;
+  const firstLines = lines(width);
+  const firstOptionY = lineIndex(firstLines, "1. Korean");
+
+  mouse(component, "press", cellX(firstLines[firstOptionY]!, "Korean"), firstOptionY, { width });
+  component.handleInput(TAB);
+  const secondLines = lines(width);
+  const secondOptionY = lineIndex(secondLines, "1. Korean");
+  mouse(component, "click", cellX(secondLines[secondOptionY]!, "Korean"), secondOptionY, { width });
+
+  expect(settled).toHaveLength(0);
+  expect(lines(width).join("\n")).toContain("Second question");
+});
+
+test("a miss press followed by a keyboard state change cannot select a newly rendered option", () => {
+  const { component, settled, lines } = mount([
+    question({
+      id: "a",
+      label: "A",
+      prompt: "A very long prompt that wraps onto a second line at this width".repeat(2),
+    }),
+    question({ id: "b", label: "B", prompt: "Second question" }),
+  ]);
+  const width = 60;
+  component.handleInput(TAB);
+  const secondLines = lines(width);
+  const koreanY = lineIndex(secondLines, "1. Korean");
+  const koreanX = cellX(secondLines[koreanY]!, "Korean");
+  component.handleInput(LEFT);
+
+  // The same cell is prompt text on the first tab, then an option on the
+  // second tab. A state-changing key must fence that miss gesture.
+  mouse(component, "press", koreanX, koreanY, { width });
+  component.handleInput(TAB);
+  mouse(component, "click", koreanX, koreanY, { width });
+
+  expect(settled).toHaveLength(0);
+  expect(lines(width).join("\n")).toContain("Second question");
+});
+
+test("a pending press is consumed after a resize or a click on another target", () => {
+  const resized = mount([question({ options: makeOptions(4), allowOther: false })], { rows: 40 });
+  const width = 60;
+  const resizedLines = resized.lines(width);
+  const koreanY = lineIndex(resizedLines, "1. OPT 1");
+  const koreanX = cellX(resizedLines[koreanY]!, "OPT 1");
+  mouse(resized.component, "press", koreanX, koreanY, { width });
+  resized.tui.terminal.rows = 14;
+  mouse(resized.component, "click", koreanX, koreanY, { width });
+  expect(resized.settled).toHaveLength(0);
+
+  const columnsOnly = mount([question({ options: makeOptions(4), allowOther: false })]);
+  const columnsLines = columnsOnly.lines(width);
+  const columnsY = lineIndex(columnsLines, "1. OPT 1");
+  const columnsX = cellX(columnsLines[columnsY]!, "OPT 1");
+  Object.assign(columnsOnly.tui.terminal, { columns: 80 });
+  mouse(columnsOnly.component, "press", columnsX, columnsY, { width });
+  Object.assign(columnsOnly.tui.terminal, { columns: 61 });
+  mouse(columnsOnly.component, "click", columnsX, columnsY, { width });
+  expect(columnsOnly.settled).toHaveLength(0);
+
+  const differentTarget = mount([question({ allowOther: false })]);
+  const targetLines = differentTarget.lines(width);
+  const firstY = lineIndex(targetLines, "1. Korean");
+  const secondY = lineIndex(targetLines, "2. English");
+  mouse(differentTarget.component, "press", cellX(targetLines[firstY]!, "Korean"), firstY, { width });
+  mouse(differentTarget.component, "click", cellX(targetLines[secondY]!, "English"), secondY, { width });
+  expect(differentTarget.settled).toHaveLength(0);
 });
 
 test("input after settlement does not produce another result", () => {

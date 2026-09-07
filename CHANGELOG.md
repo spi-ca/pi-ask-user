@@ -4,6 +4,7 @@
 
 ### 추가
 
+- Pi 0.85 fullscreen mouse를 지원합니다. 옵션 레이블·설명과 질문/검토 탭을 cell 기반 hit region으로 처리하고, 옵션 위 휠 이동과 자유 입력 editor mouse forwarding을 제공합니다.
 - 질문 필드 확장. `optional`(건너뛰기 행과 `skipped` 답변), `requireReview`(단일 질문도 검토 탭을 거침), `defaultValues`(옵션 값 미리 선택·커서 배치), `minSelections`/`maxSelections`(다중 선택 개수 범위), `otherLabel`·`otherPlaceholder`·`otherMaxLength`(자유 입력 표시와 길이 상한)를 추가했습니다.
 - 다중 선택과 자유 입력을 함께 사용할 수 있습니다. `multi` 답변에 `custom` 필드가 추가되며, 입력한 텍스트는 선택 하나로 계산됩니다.
 - 긴 목록 탐색. 화면 높이에 맞춘 옵션 창과 `↑ N more`/`↓ N more` 표시, 숫자 키 1–9 즉시 선택, `/` 필터(레이블·값·설명 대소문자 무시), 다중 선택 전체 선택(`a`)·해제(`c`)를 추가했습니다.
