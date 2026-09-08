@@ -79,7 +79,7 @@ docs/                   — 주제별 문서
 
 ### 연동 경계
 
-이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260828-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260828-1)에 정확히 고정합니다.
+이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260907-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260907-1)에 정확히 고정합니다.
 
 ## 관련 문서
 
