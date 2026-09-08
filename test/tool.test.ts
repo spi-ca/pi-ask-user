@@ -9,6 +9,10 @@ import {
   formatResultText,
   MAX_CALL_LINE_LABEL_LENGTH,
   MAX_CALL_LINE_LABELS,
+  MAX_RESULT_BYTES,
+  MAX_RESULT_LINES,
+  RESULT_TOO_LARGE_MESSAGE,
+  validateAggregateResultSize,
 } from "../src/tool.ts";
 import type { Question, QuestionnaireResult } from "../src/types.ts";
 import { makeQuestion } from "./helpers/question.ts";
@@ -62,17 +66,41 @@ test("formatResultText emits one labeled line per answer", () => {
     ],
     cancelled: false,
   };
-  expect(formatResultText(result)).toBe("A: Korean [ko]\nB: Korean, English [ko, en]");
+  expect(formatResultText(result)).toBe('A: Korean ["ko"]\nB: Korean, English ["ko","en"]');
 });
 
 test("formatAnswerLine appends values only when they differ from the labels", () => {
   const target = question({ id: "a", label: "A" });
   expect(formatAnswerLine(target, { id: "a", kind: "single", value: "ko", label: "Korean", index: 1 })).toBe(
-    "A: Korean [ko]",
+    'A: Korean ["ko"]',
   );
   expect(formatAnswerLine(target, { id: "a", kind: "single", value: "Korean", label: "Korean", index: 1 })).toBe(
     "A: Korean",
   );
+});
+
+test("formatAnswerLine always JSON-encodes multi-select machine values", () => {
+  const target = question({ id: "a", label: "A" });
+  expect(
+    formatAnswerLine(target, {
+      id: "a",
+      kind: "multi",
+      selections: [
+        { value: "A, B", label: "A", index: 1 },
+        { value: "B", label: "B", index: 2 },
+      ],
+    }),
+  ).toBe('A: A, B ["A, B","B"]');
+  expect(
+    formatAnswerLine(target, {
+      id: "a",
+      kind: "multi",
+      selections: [
+        { value: "A, B", label: "A, B", index: 1 },
+        { value: "B", label: "B", index: 2 },
+      ],
+    }),
+  ).toBe('A: A, B, B ["A, B","B"]');
 });
 
 test("formatAnswerLine keeps free text unbracketed and marks a skip", () => {
@@ -90,7 +118,7 @@ test("formatAnswerLine includes multi-select custom text among the values", () =
       selections: [{ value: "ko", label: "Korean", index: 1 }],
       custom: "Klingon",
     }),
-  ).toBe("A: Korean, Klingon [ko, Klingon]");
+  ).toBe('A: Korean, Klingon ["ko","Klingon"]');
 });
 
 test("formatCancelledText names the reason and keeps partial answers", () => {
@@ -112,7 +140,88 @@ test("formatCancelledText names the reason and keeps partial answers", () => {
     cancelReason: "user",
   });
   expect(partial).toContain("Answered so far:");
-  expect(partial).toContain("A: Korean [ko]");
+  expect(partial).toContain('A: Korean ["ko"]');
+});
+
+test("oversized possible results are rejected before the questionnaire opens", () => {
+  const oversized = question({
+    multiSelect: true,
+    allowOther: false,
+    options: Array.from({ length: 50 }, (_unused, index) => ({
+      value: `value-${index}`.padEnd(200, "v"),
+      label: `label-${index}`.padEnd(1000, "l"),
+    })),
+  });
+  expect(validateAggregateResultSize([oversized])).toBe(RESULT_TOO_LARGE_MESSAGE);
+  expect(validateAggregateResultSize([question()])).toBeUndefined();
+});
+
+test("the result-size bound covers skipped, regular, and near-limit custom cancellation output", () => {
+  const customQuestions = Array.from({ length: 6 }, (_unused, index) =>
+    question({ id: `custom-${index}`, label: `Custom ${index}`, otherMaxLength: 1920 }),
+  );
+  const regularQuestions = Array.from({ length: 7 }, (_unused, index) =>
+    question({
+      id: `regular-${index}`,
+      label: `Regular ${index}`,
+      allowOther: false,
+      options: [{ value: "same", label: "same" }],
+    }),
+  );
+  const skippedQuestions = Array.from({ length: 7 }, (_unused, index) =>
+    question({
+      id: `skipped-${index}`,
+      label: `Skipped ${index}`,
+      allowOther: false,
+      optional: true,
+      options: [{ value: "", label: "" }],
+    }),
+  );
+  const questions = [...customQuestions, ...regularQuestions, ...skippedQuestions];
+  const result: QuestionnaireResult = {
+    questions,
+    answers: [
+      ...customQuestions.map((item) => ({
+        id: item.id,
+        kind: "custom" as const,
+        value: "\u{10ffff}".repeat(item.otherMaxLength),
+        label: "\u{10ffff}".repeat(item.otherMaxLength),
+      })),
+      ...regularQuestions.map((item) => ({
+        id: item.id,
+        kind: "single" as const,
+        value: "same",
+        label: "same",
+        index: 1,
+      })),
+      ...skippedQuestions.map((item) => ({ id: item.id, kind: "skipped" as const })),
+    ],
+    cancelled: true,
+    cancelReason: "user",
+  };
+
+  expect(validateAggregateResultSize(questions)).toBeUndefined();
+  const text = formatCancelledText(result);
+  expect(new TextEncoder().encode(text).byteLength).toBeGreaterThan(45 * 1024);
+  expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+  expect(text.split("\n")).toHaveLength(questions.length + 2);
+  expect(text.split("\n").length).toBeLessThanOrEqual(MAX_RESULT_LINES);
+});
+
+test("the result-size bound accounts for lone-surrogate JSON escaping in multi custom answers", () => {
+  const questions = Array.from({ length: 20 }, (_unused, index) =>
+    question({
+      id: `surrogate-${index}`,
+      label: "q",
+      multiSelect: true,
+      otherMaxLength: 300,
+      options: [{ value: "y", label: "x" }],
+    }),
+  );
+
+  // sanitizeUserInput permits lone surrogates; TextEncoder renders them as
+  // replacement characters while JSON.stringify emits six-byte \\ud800 escapes.
+  expect(validateAggregateResultSize(questions)).toBe(RESULT_TOO_LARGE_MESSAGE);
 });
 
 test("formatResultText falls back to the answer id when no question matches", () => {

@@ -17,7 +17,8 @@ export const TOOL_NAME = "ask_user";
 export const TOOL_LABEL = "Ask User";
 export const TOOL_DESCRIPTION =
   "Ask one or more option questions. Set multiSelect for multiple answers, optional to allow skipping, " +
-  "defaultValues to preselect, and min/maxSelections to bound choices. Custom input defaults on.";
+  "defaultValues to preselect, and min/maxSelections to bound choices. Custom input defaults on. " +
+  "Rejects questionnaires whose complete answer cannot fit Pi's 50KB or 2000-line tool-result limit.";
 export const NON_INTERACTIVE_MESSAGE = "Error: UI not available (running in non-interactive mode)";
 export const CANCELLED_MESSAGE = "User cancelled the questionnaire";
 
@@ -27,6 +28,16 @@ export const MAX_CALL_LINE_LABELS = 8;
 export const MAX_CALL_LINE_LABEL_LENGTH = 60;
 /** Cap on fallback result text that never passed through normalization. */
 export const MAX_FALLBACK_TEXT_LENGTH = 500;
+/**
+ * Pi's per-tool-result model-visible output limits. Keep these local so this
+ * extension can load with only its declared peer dependencies. They mirror
+ * Pi's documented tool truncation defaults:
+ * https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/tools/truncate.ts
+ */
+export const MAX_RESULT_BYTES = 50 * 1024;
+export const MAX_RESULT_LINES = 2000;
+export const RESULT_TOO_LARGE_MESSAGE =
+  "Error: Questionnaire answers could exceed Pi's 50KB or 2000-line tool-result limit";
 
 interface ToolErrorResult {
   content: { type: "text"; text: string }[];
@@ -49,7 +60,8 @@ export function errorResult(
  * One result line for an answer, carrying both label and machine value.
  *
  * The model only sees the text content, so the values it must echo back have to
- * appear here. Values are omitted when they match the label to avoid noise.
+ * appear here. Multi-select values are always JSON so comma-delimited labels
+ * and values cannot create an ambiguous machine-readable result.
  */
 export function formatAnswerLine(question: Question | undefined, answer: Answer): string {
   const label = question?.label || answer.id;
@@ -57,9 +69,81 @@ export function formatAnswerLine(question: Question | undefined, answer: Answer)
 
   const labels = answerLabels(answer);
   const values = answerValues(answer);
-  const joinedValues = values.join(", ");
-  if (answer.kind === "custom" || joinedValues === labels) return `${label}: ${labels}`;
-  return `${label}: ${labels} [${joinedValues}]`;
+  if (answer.kind === "custom") return `${label}: ${labels}`;
+  // JSON is mandatory for multi-select, including aligned value/label pairs:
+  // its human-readable comma join is otherwise indistinguishable from an
+  // individual value or label containing commas.
+  if (answer.kind === "multi") return `${label}: ${labels} ${JSON.stringify(values)}`;
+  if (values[0] === answer.label) return `${label}: ${labels}`;
+  return `${label}: ${labels} ${JSON.stringify(values)}`;
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+type PotentialChoice = { label: string; value: string };
+
+/**
+ * Upper-bound one formatted answer without cutting a record or machine value.
+ * Custom input may contain four-byte Unicode scalar values, so use that worst
+ * case rather than an ASCII placeholder.
+ */
+function maxAnswerLineBytes(question: Question): number {
+  const customLabel = "\u{10ffff}".repeat(question.otherMaxLength);
+  // TextEncoder replaces a lone surrogate with three bytes, but JSON encodes
+  // it as six ASCII bytes. Pair its JSON worst case with a four-byte display
+  // scalar so this remains an upper bound for either representation.
+  const customJsonValue = "\ud800".repeat(question.otherMaxLength);
+  const choices: PotentialChoice[] = [
+    ...question.options.map((option) => ({ label: option.label, value: option.value })),
+    ...(question.allowOther ? [{ label: customLabel, value: customJsonValue }] : []),
+  ];
+  const skipped = question.optional ? byteLength(`${question.label}: (skipped)`) : 0;
+
+  if (!question.multiSelect) {
+    return Math.max(
+      skipped,
+      ...question.options.map((option) =>
+        byteLength(`${question.label}: ${option.label} ${JSON.stringify([option.value])}`),
+      ),
+      ...(question.allowOther ? [byteLength(`${question.label}: ${customLabel}`)] : []),
+    );
+  }
+
+  const count = Math.min(question.maxSelections ?? choices.length, choices.length);
+  const selected = choices
+    .map((choice) => ({
+      choice,
+      weight: byteLength(choice.label) + byteLength(JSON.stringify(choice.value)),
+    }))
+    .sort((left, right) => right.weight - left.weight)
+    .slice(0, count)
+    .map(({ choice }) => choice);
+  // Multi-select formatting always includes the JSON values, so this mirrors
+  // its machine-value suffix while still taking the worst permitted choices.
+  return Math.max(
+    skipped,
+    byteLength(
+      `${question.label}: ${selected.map((choice) => choice.label).join(", ")} ${JSON.stringify(
+        selected.map((choice) => choice.value),
+      )}`,
+    ),
+  );
+}
+
+/** Reject an unrepresentable questionnaire before opening UI instead of truncating answers. */
+export function validateAggregateResultSize(questions: readonly Question[]): string | undefined {
+  const answerBytes =
+    questions.reduce((total, question) => total + maxAnswerLineBytes(question), 0) + Math.max(0, questions.length - 1);
+  // A user may cancel from the review tab after answering every question, so
+  // reserve the model-visible cancellation heading as well as answer records.
+  const cancellationPrefix = `${CANCELLED_MESSAGE} (the tool call was aborted)\nAnswered so far:\n`;
+  const answerLines = questions.length;
+  if (answerBytes + byteLength(cancellationPrefix) > MAX_RESULT_BYTES || answerLines + 2 > MAX_RESULT_LINES) {
+    return RESULT_TOO_LARGE_MESSAGE;
+  }
+  return undefined;
 }
 
 /** Plain-text tool output: one `label: answer` line per answered question. */
@@ -194,6 +278,8 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
         return errorResult(normalized);
       }
       const questions = normalized;
+      const resultSizeError = validateAggregateResultSize(questions);
+      if (resultSizeError) return errorResult(resultSizeError, questions);
       const presenceToken = presence.beginRequest(ctx);
       let component: QuestionnaireComponent | null = null;
       let cancelRequested = false;

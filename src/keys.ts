@@ -15,6 +15,8 @@ export const SELECT_BINDINGS = {
   cancel: "tui.select.cancel",
   /** The embedded editor submits on this binding, not on select.confirm. */
   submit: "tui.input.submit",
+  /** Needed to avoid stealing Enter when an editor uses it for a newline. */
+  newLine: "tui.input.newLine",
 } as const;
 
 export type SelectAction = keyof typeof SELECT_BINDINGS;
@@ -31,7 +33,19 @@ const FALLBACK_KEYS: Record<SelectAction, KeyId[]> = {
   confirm: ["enter"],
   cancel: ["escape"],
   submit: ["enter"],
+  newLine: ["shift+enter", "ctrl+j"],
 };
+
+/** Raw input Pi delivers for each built-in fallback key. */
+const FALLBACK_INPUTS: Partial<Record<KeyId, string>> = {
+  up: "\u001b[A",
+  down: "\u001b[B",
+  enter: "\r",
+  escape: "\u001b",
+};
+
+/** These select-list actions share a key-dispatch context in this component. */
+const SELECT_ACTIONS: readonly SelectAction[] = ["up", "down", "confirm", "cancel"];
 
 const KEY_LABELS: Record<string, string> = {
   up: "↑",
@@ -65,6 +79,8 @@ function isKeybindingsLike(value: unknown): value is KeybindingsLike {
 export interface KeyResolver {
   matches(data: string, action: SelectAction): boolean;
   label(action: SelectAction): string;
+  /** Whether the embedded editor has a non-conflicting way to submit text. */
+  canSubmit(): boolean;
 }
 
 /** Longest key id accepted from a manager, e.g. `ctrl+shift+pageDown`. */
@@ -104,11 +120,11 @@ export function keyLabel(keyId: string): string {
  * Build a resolver from an untrusted `keybindings` argument.
  *
  * A usable manager is authoritative: a binding it rejects stays rejected, so
- * rebinding a key takes effect. The one exception is an action the manager
- * reports as having no keys at all. This prompt is modal, so an unbound
- * `confirm` would make it impossible to answer; such an action falls back to its
- * built-in key and the help text names that key, keeping display and behavior
- * aligned. Defaults also apply when no usable manager was supplied or when it
+ * rebinding a key takes effect. An empty action may use a built-in fallback
+ * only when no *configured sibling action* claims that input; otherwise a
+ * fallback could override the user's configured dispatch. Submit is stricter:
+ * its Enter fallback is available only when no configured editor action claims
+ * Enter. Defaults also apply when no usable manager was supplied or when it
  * throws.
  */
 export function createKeyResolver(keybindings: unknown): KeyResolver {
@@ -121,14 +137,96 @@ export function createKeyResolver(keybindings: unknown): KeyResolver {
       const keys = manager.getKeys(SELECT_BINDINGS[action]);
       return Array.isArray(keys) ? keys.filter(isKeyIdLike) : undefined;
     } catch {
-      // Help text must never fail rendering.
-      return undefined;
+      // A broken key-list API cannot make this modal unusable. Treat that
+      // action as unbound; matches() failures take the same fallback path.
+      return [];
     }
+  }
+
+  // Keep submit's fallback behind Pi's editor dispatch order: configuration
+  // may legitimately assign Enter to any of these actions, not just newLine.
+  const editorActions = [
+    SELECT_BINDINGS.newLine,
+    "tui.input.tab",
+    "tui.input.copy",
+    ...SELECT_ACTIONS.map((action) => SELECT_BINDINGS[action]),
+    "tui.editor.cursorUp",
+    "tui.editor.cursorDown",
+    "tui.editor.cursorLeft",
+    "tui.editor.cursorRight",
+    "tui.editor.cursorWordLeft",
+    "tui.editor.cursorWordRight",
+    "tui.editor.cursorLineStart",
+    "tui.editor.cursorLineEnd",
+    "tui.editor.jumpForward",
+    "tui.editor.jumpBackward",
+    "tui.editor.pageUp",
+    "tui.editor.pageDown",
+    "tui.editor.deleteCharBackward",
+    "tui.editor.deleteCharForward",
+    "tui.editor.deleteWordBackward",
+    "tui.editor.deleteWordForward",
+    "tui.editor.deleteToLineStart",
+    "tui.editor.deleteToLineEnd",
+    "tui.editor.yank",
+    "tui.editor.yankPop",
+    "tui.editor.undo",
+    "tui.editor.historyPrevious",
+    "tui.editor.historyNext",
+  ];
+
+  function configuredActionClaims(data: string, keyId: string, keybinding: string): boolean {
+    if (!manager) return false;
+    // getKeys establishes that this is a configured action; its exact key IDs
+    // cover fakes and managers that do not expose a raw-input matcher for every
+    // key spelling. matches additionally catches equivalent spellings such as
+    // an Enter sequence reported as "return".
+    const configured = resolvedKeysForBinding(keybinding);
+    if (!configured) return false;
+    if (configured.includes(keyId)) return true;
+    try {
+      return manager.matches(data, keybinding) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  function resolvedKeysForBinding(keybinding: string): readonly string[] | undefined {
+    if (!manager?.getKeys) return undefined;
+    try {
+      const keys = manager.getKeys(keybinding);
+      return Array.isArray(keys) ? keys.filter(isKeyIdLike) : undefined;
+    } catch {
+      return [];
+    }
+  }
+
+  function fallbackKeysFor(action: SelectAction): readonly KeyId[] {
+    const configured = resolvedKeys(action);
+    if (configured === undefined || configured.length > 0 || !manager) return FALLBACK_KEYS[action];
+    const siblingBindings =
+      action === "submit"
+        ? editorActions
+        : SELECT_ACTIONS.filter((candidate) => candidate !== action).map((candidate) => SELECT_BINDINGS[candidate]);
+    return FALLBACK_KEYS[action].filter((keyId) => {
+      const data = FALLBACK_INPUTS[keyId];
+      // No raw input representation means this fallback is never dispatched by
+      // this component, so it cannot make a help hint truthful or usable.
+      return data !== undefined && !siblingBindings.some((binding) => configuredActionClaims(data, keyId, binding));
+    });
   }
 
   function keysFor(action: SelectAction): readonly string[] {
     const keys = resolvedKeys(action);
-    return keys && keys.length > 0 ? keys : FALLBACK_KEYS[action];
+    return keys && keys.length > 0 ? keys : fallbackKeysFor(action);
+  }
+
+  function canSubmit(): boolean {
+    if (!manager) return true;
+    const resolved = resolvedKeys("submit");
+    // A manager that cannot report its keys can still match a configured submit
+    // action at runtime, so retain the editor instead of hiding it preemptively.
+    return resolved === undefined || resolved.length > 0 || fallbackKeysFor("submit").length > 0;
   }
 
   return {
@@ -137,19 +235,23 @@ export function createKeyResolver(keybindings: unknown): KeyResolver {
         try {
           if (manager.matches(data, SELECT_BINDINGS[action]) === true) return true;
           // Only a manager that reports an empty key list tells us the action is
-          // unbound; anything else is an authoritative rejection.
+          // unbound; anything else is an authoritative rejection. Submit may
+          // borrow Enter only when that key is not claimed by the editor.
           const resolved = resolvedKeys(action);
           if (resolved === undefined || resolved.length > 0) return false;
+          const fallback = fallbackKeysFor(action);
+          return fallback.some((keyId) => matchesKey(data, keyId));
         } catch {
           // A throwing manager cannot be trusted either way, so fall back to
           // the defaults rather than leaving the questionnaire unusable.
         }
       }
-      return FALLBACK_KEYS[action].some((keyId) => matchesKey(data, keyId));
+      return fallbackKeysFor(action).some((keyId) => matchesKey(data, keyId));
     },
     label(action) {
       const [first] = keysFor(action);
-      return keyLabel(first ?? FALLBACK_KEYS[action][0]!);
+      return first ? keyLabel(first) : "Unbound";
     },
+    canSubmit,
   };
 }

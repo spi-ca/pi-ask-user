@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v20260907-2
+
+### 수정
+
+- 가능한 완료·취소 결과가 Pi의 50KB·2000줄 한도를 넘는 설문은 UI를 열기 전에 거부하고, 다중 선택 기계값은 JSON 배열로 표시해 출력 경계를 보장합니다.
+- 키 바인딩 대체는 명시적으로 비어 있거나 실패한 동작에만 적용하고, 다른 선택·편집 동작이 소유한 키와 제출 불가능한 자유 입력 항목을 가로채지 않습니다.
+
+### 개발
+
+- CI에서 lockfile 기준과 현재 호환성 Pi graph를 검증하고, pack tarball을 격리 consumer에 설치·import하는 smoke를 실행합니다.
+
 ### 추가
 
 - Pi 0.85 fullscreen mouse를 지원합니다. 옵션 레이블·설명과 질문/검토 탭을 cell 기반 hit region으로 처리하고, 옵션 위 휠 이동과 자유 입력 editor mouse forwarding을 제공합니다.

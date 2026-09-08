@@ -68,6 +68,26 @@ test("an action the manager reports as unbound falls back so the prompt stays us
   expect(resolver.label("confirm")).toBe("Enter");
 });
 
+test("an unbound fallback never overrides another configured select action", () => {
+  const resolver = createKeyResolver({
+    matches: (data: string, keybinding: string) =>
+      (keybinding === SELECT_BINDINGS.cancel && data === ENTER) ||
+      (keybinding === SELECT_BINDINGS.down && data === DOWN),
+    getKeys: (keybinding: string) => {
+      if (keybinding === SELECT_BINDINGS.cancel) return ["enter"];
+      if (keybinding === SELECT_BINDINGS.down) return ["up"];
+      return [];
+    },
+  });
+
+  expect(resolver.matches(ENTER, "confirm")).toBe(false);
+  expect(resolver.label("confirm")).toBe("Unbound");
+  expect(resolver.matches(DOWN, "up")).toBe(false);
+  expect(resolver.label("up")).toBe("Unbound");
+  expect(resolver.matches(ENTER, "cancel")).toBe(true);
+  expect(resolver.matches(DOWN, "down")).toBe(true);
+});
+
 test("a rejection with keys still bound is authoritative", () => {
   const resolver = createKeyResolver({
     matches: (data: string, keybinding: string) => keybinding === SELECT_BINDINGS.confirm && data === "\u0013",
@@ -98,6 +118,28 @@ test("the editor submit binding is resolved separately from select confirm", () 
   });
   expect(resolver.label("submit")).toBe("Ctrl+M");
   expect(resolver.label("confirm")).toBe("Ctrl+S");
+  expect(resolver.canSubmit()).toBe(true);
+});
+
+test("an empty submit binding does not steal Enter from a configured editor newline", () => {
+  const resolver = createKeyResolver({
+    matches: (data: string, keybinding: string) => data === ENTER && keybinding === SELECT_BINDINGS.newLine,
+    getKeys: (keybinding: string) =>
+      keybinding === SELECT_BINDINGS.submit ? [] : keybinding === SELECT_BINDINGS.newLine ? ["enter"] : ["ctrl+s"],
+  });
+
+  expect(resolver.matches(ENTER, "submit")).toBe(false);
+  expect(resolver.canSubmit()).toBe(false);
+});
+
+test("an empty submit binding retains its Enter fallback when no editor action claims it", () => {
+  const resolver = createKeyResolver({
+    matches: () => false,
+    getKeys: (keybinding: string) => (keybinding === SELECT_BINDINGS.submit ? [] : ["ctrl+s"]),
+  });
+
+  expect(resolver.matches(ENTER, "submit")).toBe(true);
+  expect(resolver.canSubmit()).toBe(true);
 });
 
 test("key labels are sanitized before they reach the screen", () => {

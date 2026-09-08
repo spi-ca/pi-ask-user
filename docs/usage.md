@@ -59,7 +59,7 @@
 
 ## 입력 검증
 
-정규화는 UI를 열기 전에 수행하며, 실패하면 오류 문자열을 `cancelled: true`, `cancelReason: "invalid"` 결과로 반환합니다. 예외를 던지지 않습니다.
+도구가 실제로 실행된 뒤의 정규화는 UI를 열기 전에 수행하며, 실패하면 오류 문자열과 구조화된 `cancelled: true`, `cancelReason: "invalid"` 결과를 반환합니다. 예외를 던지지 않습니다. 반면 Pi 호스트가 도구 스키마를 먼저 거부한 호출은 이 도구의 실행 자체가 없으므로 `details`를 포함한다는 보장이 없습니다.
 
 | 조건 | 반환 메시지 |
 | --- | --- |
@@ -85,6 +85,8 @@
 
 `N`과 `M`은 1부터 시작하는 위치입니다. `id`는 비교와 저장 모두 공백을 제거한 값을 사용하므로 `"lang"`과 `" lang "`은 중복입니다. 반대로 `prompt`, `label`, 옵션 `value`·`label`은 자동으로 `trim`하지 않습니다. 자유 입력 답변만 저장 시점에 `trim`합니다.
 
+정규화 뒤에는 가능한 완전 답변과 검토 탭에서 취소할 때의 모든 부분 답변을 함께 계산합니다. 이 텍스트가 Pi 도구 결과 한도인 **50KB 또는 2000줄**을 넘을 수 있으면 UI를 열지 않고 `Error: Questionnaire answers could exceed Pi's 50KB or 2000-line tool-result limit` 오류 결과를 반환합니다. 일부 답변·식별자·자유 입력을 조용히 자르지 않으며, 오류 결과의 `details.questions`에는 정규화된 질문을 그대로 담습니다.
+
 ### 표시 문자열 안전 처리
 
 질문 텍스트는 파일·명령 출력·웹 내용을 읽는 모델이 제공할 수 있으므로 표시 경계에서 정제합니다. escape, C0/C1 제어 문자와 bidi 제어 문자를 제거하고, 탭과 carriage return은 공백으로 바꿉니다. 줄바꿈은 `prompt`에서만 유지합니다. 라이브로 렌더링하는 필터 텍스트와 자유 입력 편집기 버퍼도 입력 중에 같은 제어·bidi 문자를 제거합니다. 따라서 붙여넣은 텍스트도 화면에 표시되기 전에 정제되며, 편집기 버퍼는 `otherMaxLength`를 넘지 않습니다.
@@ -104,11 +106,11 @@
 
 ## 반환 형식
 
-완료된 도구 결과의 텍스트는 답변한 질문마다 `라벨: 답변` 한 줄입니다. 옵션의 결합 기계값이 표시 레이블과 다르면 대괄호에 함께 넣어 모델이 값을 사용할 수 있게 합니다. 자유 입력 답변에는 대괄호를 추가하지 않습니다.
+완료된 도구 결과의 텍스트는 답변한 질문마다 `라벨: 답변` 한 줄입니다. 다중 선택은 표시 레이블과 값이 모두 같아도 기계값 JSON 배열을 **항상** 함께 넣어 모델이 쉼표·대괄호가 든 값도 모호하지 않게 사용할 수 있습니다. 단일 옵션 선택은 값과 레이블이 다를 때만 배열을 넣고, 자유 입력 단일 답변에는 배열을 추가하지 않습니다.
 
 ```text
-Runtime: Bun [bun]
-Targets: macOS, Linux [macos, linux]
+Runtime: Bun ["bun"]
+Targets: macOS, Linux ["macos","linux"]
 Language: Klingon
 ```
 
@@ -162,7 +164,7 @@ User cancelled the questionnaire (the user cancelled)
 
 ```text
 Answered so far:
-Runtime: Bun [bun]
+Runtime: Bun ["bun"]
 ```
 
 비대화형·잘못된 입력은 각각 앞서 설명한 오류 텍스트를 즉시 반환하지만, 구조화된 결과에는 각각 `"unavailable"`·`"invalid"` 사유를 기록합니다. 접힌 결과 줄은 사용자 취소면 `Cancelled`, 그 밖의 사유면 `Cancelled (aborted)`처럼 표시합니다.

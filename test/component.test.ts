@@ -534,6 +534,28 @@ test("custom keybindings replace the defaults in input and help text", () => {
   expect(settled[0]!.answers[0]).toMatchObject({ value: "ko" });
 });
 
+test("unbound select fallbacks yield to configured sibling actions in the component", () => {
+  const cancelWins = mount([question()], {
+    keybindings: {
+      matches: (data: string, keybinding: string) => keybinding === "tui.select.cancel" && data === ENTER,
+      getKeys: (keybinding: string) => (keybinding === "tui.select.cancel" ? ["enter"] : []),
+    },
+  });
+  expect(cancelWins.lines().join("\n")).toContain("Unbound select");
+  cancelWins.component.handleInput(ENTER);
+  expect(cancelWins.settled[0]).toMatchObject({ cancelled: true, cancelReason: "user" });
+
+  const downWins = mount([question({ allowOther: false })], {
+    keybindings: {
+      matches: (data: string, keybinding: string) => keybinding === "tui.select.down" && data === UP,
+      getKeys: (keybinding: string) => (keybinding === "tui.select.down" ? ["up"] : []),
+    },
+  });
+  expect(downWins.lines().join("\n")).toContain("Unbound/↑ navigate");
+  downWins.component.handleInput(UP);
+  expect(downWins.lines().join("\n")).toContain("> 2. English");
+});
+
 test("a keybindings manager that throws falls back to the default keys", () => {
   const keybindings = {
     matches: () => {
@@ -592,6 +614,37 @@ test("the editor hint names the input submit key, not the select confirm key", (
   const editing = lines().join("\n");
   expect(editing).toContain("Ctrl+M to submit");
   expect(editing).not.toContain("Ctrl+S to submit");
+});
+
+test("an unbound input submit binding falls back to Enter in the embedded editor", () => {
+  const keybindings = {
+    matches: () => false,
+    getKeys: (keybinding: string) => (keybinding === "tui.input.submit" ? [] : ["escape"]),
+  };
+  const { component, settled, lines } = mount([question()], { keybindings });
+
+  component.handleInput("3");
+  type(component, "Klingon");
+  expect(lines().join("\n")).toContain("Enter to submit");
+  component.handleInput(ENTER);
+
+  expect(settled[0]!.answers).toEqual([{ id: "lang", kind: "custom", value: "Klingon", label: "Klingon" }]);
+});
+
+test("an Enter newline binding disables unavailable custom input without submitting", () => {
+  const keybindings = {
+    matches: (data: string, keybinding: string) => data === ENTER && keybinding === "tui.input.newLine",
+    getKeys: (keybinding: string) =>
+      keybinding === "tui.input.submit" ? [] : keybinding === "tui.input.newLine" ? ["enter"] : ["ctrl+s"],
+  };
+  const { component, settled, lines } = mount([question()], { keybindings });
+
+  expect(lines().join("\n")).not.toContain("Type something.");
+  component.handleInput("3");
+  component.handleInput(ENTER);
+
+  expect(lines().join("\n")).not.toContain("Your answer:");
+  expect(settled).toHaveLength(0);
 });
 
 test("typing safe text leaves the cursor alone so mid-string edits work", () => {

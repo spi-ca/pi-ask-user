@@ -183,15 +183,17 @@ export interface HelpTextOptions {
 /** Footer hint text, built from the keys actually bound in this session. */
 export function helpText(options: HelpTextOptions): string {
   const keys = { ...DEFAULT_HELP_KEYS, ...options.keys };
+  // Normal arrow glyphs read as a compact pair. An unavailable action needs a
+  // separator so "Unbound" is a truthful hint rather than a merged key name.
+  const navigationKeys =
+    keys.up === "Unbound" || keys.down === "Unbound" ? `${keys.up}/${keys.down}` : `${keys.up}${keys.down}`;
   if (options.filterActive) {
-    return `Type to filter • ${keys.up}${keys.down} select • ${keys.confirm} choose • ${keys.cancel} clear filter`;
+    return `Type to filter • ${navigationKeys} select • ${keys.confirm} choose • ${keys.cancel} clear filter`;
   }
 
   const segments: string[] = [];
   segments.push(
-    options.hasMultipleQuestions
-      ? `Tab/←→ navigate • ${keys.up}${keys.down} select`
-      : `${keys.up}${keys.down} navigate`,
+    options.hasMultipleQuestions ? `Tab/←→ navigate • ${navigationKeys} select` : `${navigationKeys} navigate`,
   );
   segments.push("1-9 jump");
   segments.push(
