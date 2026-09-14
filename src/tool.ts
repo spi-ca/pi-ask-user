@@ -16,9 +16,8 @@ import type { Answer, CancelReason, Question, QuestionnaireResult } from "./type
 export const TOOL_NAME = "ask_user";
 export const TOOL_LABEL = "Ask User";
 export const TOOL_DESCRIPTION =
-  "Ask one or more option questions. Set multiSelect for multiple answers, optional to allow skipping, " +
-  "defaultValues to preselect, and min/maxSelections to bound choices. Custom input defaults on. " +
-  "Rejects questionnaires whose complete answer cannot fit Pi's 50KB or 2000-line tool-result limit.";
+  "When a user choice, approval, or clarification is needed, call this tool instead of listing choices in chat. " +
+  "Supports multiple questions, multi-select, and custom input. Requires interactive TUI.";
 export const NON_INTERACTIVE_MESSAGE = "Error: UI not available (running in non-interactive mode)";
 export const CANCELLED_MESSAGE = "User cancelled the questionnaire";
 
