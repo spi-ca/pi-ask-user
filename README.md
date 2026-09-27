@@ -137,6 +137,7 @@ pi install /absolute/path/to/pi-ask-user
 | 주제 | 문서 |
 | --- | --- |
 | 도구 호출 형식, 검증 규칙, 답변 형식 | [`docs/usage.md`](docs/usage.md) |
+| 다른 확장에서 설문 컴포넌트 사용 | [`docs/ui.md`](docs/ui.md) |
 | presence 이벤트 계약과 설정 경계 | [`docs/configuration.md`](docs/configuration.md) |
 | 개발 워크플로, 프로젝트 구조, 검증 범위 | [`docs/development.md`](docs/development.md) |
 | 변경 이력 | [`CHANGELOG.md`](CHANGELOG.md) |

@@ -3,9 +3,9 @@ import { QuestionnaireState } from "../src/state.ts";
 import type { Question, QuestionnaireResult } from "../src/types.ts";
 import { makeOptions, makeQuestion as question } from "./helpers/question.ts";
 
-function makeState(questions: Question[]) {
+function makeState(questions: Question[], canSubmit?: (result: QuestionnaireResult) => boolean) {
   const settled: QuestionnaireResult[] = [];
-  const state = new QuestionnaireState({ questions, onSettled: (result) => settled.push(result) });
+  const state = new QuestionnaireState({ questions, onSettled: (result) => settled.push(result), canSubmit });
   return { state, settled };
 }
 
@@ -583,6 +583,113 @@ test("submitCustomInput without an active edit does nothing", () => {
   const { state, settled } = makeState([question()]);
   expect(state.submitCustomInput("value")).toBe(false);
   expect(settled).toHaveLength(0);
+});
+
+test("veto leaves a single question active for a changed answer and retry", () => {
+  const target = question({ allowOther: false });
+  const attempts: QuestionnaireResult[] = [];
+  const { state, settled } = makeState([target], (result) => {
+    attempts.push(result);
+    expect(state.isSettled).toBe(false);
+    return result.answers[0]?.kind === "single" && result.answers[0].value === "en";
+  });
+
+  state.saveSingleAnswer(target, 0);
+  expect(attempts[0]!.answers[0]).toMatchObject({ value: "ko" });
+  expect(state.isSettled).toBe(false);
+  expect(settled).toHaveLength(0);
+  state.saveSingleAnswer(target, 1);
+  expect(attempts).toHaveLength(2);
+  expect(settled).toHaveLength(1);
+  state.submit(false);
+  state.submit(true);
+  expect(attempts).toHaveLength(2);
+  expect(settled).toHaveLength(1);
+});
+
+test("cancellation after a veto bypasses the guard and keeps the current answer", () => {
+  const target = question();
+  let calls = 0;
+  const { state, settled } = makeState([target], () => {
+    calls += 1;
+    return false;
+  });
+  state.saveSingleAnswer(target, 0);
+  state.submit(true, "aborted");
+  state.submit(false);
+  expect(calls).toBe(1);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]).toMatchObject({ cancelled: true, cancelReason: "aborted" });
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+});
+
+test("cancellation inside a guard settles only cancellation, even when guard approves", () => {
+  const target = question();
+  let calls = 0;
+  const { state, settled } = makeState([target], () => {
+    calls++;
+    state.submit(true, "aborted");
+    return true;
+  });
+  state.saveSingleAnswer(target, 0);
+  state.submit(false);
+  expect(calls).toBe(1);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]).toMatchObject({ cancelled: true, cancelReason: "aborted" });
+});
+
+test("recursive submission inside a guard cannot reenter or settle twice", () => {
+  const target = question();
+  let calls = 0;
+  const { state, settled } = makeState([target], () => {
+    calls++;
+    state.submit(false);
+    return true;
+  });
+  state.saveSingleAnswer(target, 0);
+  expect(calls).toBe(1);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]!.cancelled).toBe(false);
+});
+
+test("guard mutation and veto cannot change answers, selections or question data on retry", () => {
+  const target = question({ multiSelect: true, requireReview: true, defaultValues: ["ko"] });
+  let calls = 0;
+  const { state, settled } = makeState([target], (result) => {
+    calls++;
+    result.questions[0]!.options[0]!.value = "tampered";
+    result.questions[0]!.defaultValues[0] = "tampered";
+    const answer = result.answers[0]!;
+    if (answer.kind === "multi") {
+      answer.selections[0]!.value = "tampered";
+      answer.selections.push({ value: "extra", label: "Extra", index: 9 });
+    }
+    return calls > 1;
+  });
+  state.confirmMultiAnswer(target);
+  state.submit(false);
+  expect(settled).toHaveLength(0);
+  expect(state.answerFor("lang")).toMatchObject({ selections: [{ value: "ko" }] });
+  expect(target.options[0]!.value).toBe("ko");
+  expect(target.defaultValues).toEqual(["ko"]);
+  state.submit(false);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]!.answers).toMatchObject([{ selections: [{ value: "ko" }] }]);
+  expect(settled[0]!.questions[0]!.options[0]!.value).toBe("ko");
+});
+
+test("a throwing guard releases the submission fence for retry and cancellation", () => {
+  const target = question();
+  let calls = 0;
+  const { state, settled } = makeState([target], () => {
+    if (++calls === 1) throw new Error("guard failed");
+    return true;
+  });
+  expect(() => state.saveSingleAnswer(target, 0)).toThrow("guard failed");
+  expect(state.isSettled).toBe(false);
+  state.submit(false);
+  expect(calls).toBe(2);
+  expect(settled).toHaveLength(1);
 });
 
 test("settlement happens exactly once", () => {

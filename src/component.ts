@@ -34,7 +34,7 @@ import {
   wrapLinesWithPrefix,
 } from "./render.ts";
 import { MAX_DISPLAY_LENGTH, stripUnsafeCharacters, truncateCodePoints } from "./sanitize.ts";
-import { QuestionnaireState } from "./state.ts";
+import { QuestionnaireState, snapshotQuestions } from "./state.ts";
 import type { CancelReason, Question, QuestionnaireResult, RenderOption } from "./types.ts";
 
 /** Option count above which the filter hint is worth showing. */
@@ -88,6 +88,8 @@ export interface CreateQuestionnaireComponentOptions {
   /** Pi's `KeybindingsManager`; defaults are used when absent. */
   keybindings?: unknown;
   done: (result: QuestionnaireResult) => void;
+  /** Synchronous veto before a completed result settles; cancellation is unaffected. */
+  canSubmit?: (result: QuestionnaireResult) => boolean;
 }
 
 /**
@@ -126,8 +128,14 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
   const interactiveQuestions = keys.canSubmit()
     ? questions
     : questions.map((question) => ({ ...question, allowOther: false }));
+  const canSubmit = options.canSubmit;
   const state = new QuestionnaireState({
     questions: interactiveQuestions,
+    ...(canSubmit
+      ? {
+          canSubmit: (result: QuestionnaireResult) => canSubmit({ ...result, questions: snapshotQuestions(questions) }),
+        }
+      : {}),
     onSettled: (result) => done({ ...result, questions }),
   });
 

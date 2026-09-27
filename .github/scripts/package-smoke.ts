@@ -103,6 +103,46 @@ console.log(JSON.stringify({ registrations: calls.filter((call) => call.kind !==
 `;
 }
 
+function smokeUi(packageName: string): string {
+  return `
+const ui = await import(${JSON.stringify(`${packageName}/ui`)});
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+assert(typeof ui.createQuestionnaireComponent === "function", "missing UI component export");
+assert(typeof ui.normalizeQuestions === "function", "missing UI normalizer export");
+assert(ui.default === undefined, "UI entry must not be an extension registration entry");
+const questions = ui.normalizeQuestions({ questions: [{
+  id: "choice", prompt: "Pick one", requireReview: true, allowOther: false,
+  options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }],
+}] });
+assert(Array.isArray(questions), "normalization failed");
+const done = [];
+let attempts = 0;
+const component = ui.createQuestionnaireComponent({
+  questions,
+  tui: { requestRender() {}, terminal: { columns: 80, rows: 24 } },
+  theme: { fg: (_color, text) => text, bg: (_color, text) => text, bold: (text) => text },
+  canSubmit: (result) => {
+    attempts++;
+    assert(result.answers[0]?.value === "yes", "guard saw incorrect answer");
+    result.questions[0].options[0].value = "modified";
+    result.answers[0].value = "modified";
+    return attempts > 1;
+  },
+  done: (result) => done.push(result),
+});
+assert(component.render(80).some(line => line.includes("Pick one")), "UI prompt did not render");
+component.handleInput("1");
+component.handleInput("\\r");
+assert(attempts === 1 && done.length === 0, "guard veto did not preserve UI");
+component.handleInput("\\r");
+assert(attempts === 2 && done.length === 1, "guard retry failed");
+assert(done[0].answers[0].value === "yes" && done[0].questions[0].options[0].value === "yes", "guard mutated final result");
+component.cancel();
+assert(done.length === 1, "UI settled twice");
+console.log("installed UI import and direct guard retry passed (without extension registration)");
+`;
+}
+
 function exactVersion(name: string, version: string | undefined): string {
   if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error(`${name} needs an exact, locally determined smoke version`);
@@ -195,6 +235,10 @@ async function main(): Promise<void> {
     }
     writeFileSync(join(consumer, "smoke.ts"), smokeStub(pkg.name, profile));
     run([process.execPath, "smoke.ts"], consumer, env);
+    if (pkg.name === "pi-ask-user") {
+      writeFileSync(join(consumer, "ui-smoke.ts"), smokeUi(pkg.name));
+      run([process.execPath, "ui-smoke.ts"], consumer, env);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
