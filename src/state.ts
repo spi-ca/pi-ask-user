@@ -14,10 +14,27 @@ export interface QuestionnaireStateOptions {
   questions: Question[];
   /** Called exactly once when the questionnaire settles. */
   onSettled: (result: QuestionnaireResult) => void;
+  /** Synchronous veto of a completed submission; never called for cancellation. */
+  canSubmit?: (result: QuestionnaireResult) => boolean;
 }
 
 /** Which bound a rejected multi-select action violated. */
 export type SelectionErrorKind = "min" | "max";
+
+/** Detach the plain normalized question data before handing it to a submission guard. */
+export function snapshotQuestions(questions: Question[]): Question[] {
+  return questions.map((question) => ({
+    ...question,
+    options: question.options.map((option) => ({ ...option })),
+    defaultValues: [...question.defaultValues],
+  }));
+}
+
+function snapshotAnswer(answer: Answer): Answer {
+  return answer.kind === "multi"
+    ? { ...answer, selections: answer.selections.map((selection) => ({ ...selection })) }
+    : { ...answer };
+}
 
 /** Where the cursor should rest when a question regains focus. */
 type CursorTarget = { kind: "option"; index: number } | { kind: "other" } | { kind: "skip" };
@@ -32,6 +49,7 @@ export class QuestionnaireState {
 
   private readonly questions: Question[];
   private readonly onSettled: (result: QuestionnaireResult) => void;
+  private readonly canSubmit?: (result: QuestionnaireResult) => boolean;
   private readonly answers = new Map<string, Answer>();
   /** Chosen option positions within `question.options`, by question id. */
   private readonly multiSelections = new Map<string, Set<number>>();
@@ -44,10 +62,12 @@ export class QuestionnaireState {
   private selectionError: { id: string; kind: SelectionErrorKind } | null = null;
   private customError: string | null = null;
   private settled = false;
+  private submitting = false;
 
   constructor(options: QuestionnaireStateOptions) {
     this.questions = options.questions;
     this.onSettled = options.onSettled;
+    this.canSubmit = options.canSubmit;
     this.applyDefaults();
     this.syncCursorToAnswer();
   }
@@ -440,16 +460,35 @@ export class QuestionnaireState {
     return true;
   }
 
-  /** Settle the questionnaire once; later calls are ignored. */
+  /** Settle once; a veto leaves answers and navigation available for retry. */
   submit(cancelled: boolean, reason: CancelReason = "user"): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.onSettled({
+    // Cancellation may interrupt a guard, but a nested non-cancelled submit
+    // must not enter it again (or settle ahead of the outer submission).
+    if (this.settled || (!cancelled && this.submitting)) return;
+    if (!cancelled && this.canSubmit) {
+      this.submitting = true;
+      let approved: boolean;
+      try {
+        approved = this.canSubmit({
+          questions: snapshotQuestions(this.questions),
+          answers: this.answersInQuestionOrder().map(snapshotAnswer),
+          cancelled: false,
+        });
+      } finally {
+        this.submitting = false;
+      }
+      if (this.settled || approved === false) return;
+    }
+    // Rebuild after the guard: cancellation during it has already settled,
+    // and guard-owned snapshots must never become the canonical result.
+    const result: QuestionnaireResult = {
       questions: this.questions,
       answers: this.answersInQuestionOrder(),
       cancelled,
       ...(cancelled ? { cancelReason: reason } : {}),
-    });
+    };
+    this.settled = true;
+    this.onSettled(result);
   }
 
   private wouldExceedMaximum(question: Question, total: number): boolean {

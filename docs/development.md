@@ -2,7 +2,7 @@
 
 ## 도구와 타입 경로
 
-이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.85.0`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
+이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.87.1`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
 
 ```bash
 bun install --frozen-lockfile
@@ -20,6 +20,7 @@ bun pm pack --dry-run
 
 ```text
 index.ts                — 안정적인 Pi 확장 진입점, package.json의 pi.extensions가 참조
+ui.ts                   — 다른 확장용 공개 설문 UI 경로, 등록·presence 부작용 없음
 src/types.ts            — 질문·옵션·답변·취소 사유·결과의 공유 값 타입
 src/questions.ts        — typebox 파라미터 스키마와 신뢰할 수 없는 입력 정규화
 src/sanitize.ts         — 모델 제공 표시 문자열과 사용자 입력의 안전 처리·길이 제한
@@ -42,7 +43,7 @@ test/helpers/           — fake theme·fake TUI, 정규화 기본값 질문 fac
 docs/                   — 주제별 문서
 ```
 
-루트 `index.ts`는 그대로 둡니다. `package.json`의 `pi.extensions`가 이 파일을 확장 진입점으로 참조하기 때문입니다. `src/`는 하위 디렉터리 없이 평면 구조이며 각 모듈이 타입·검증·상태·포매팅·렌더링·presence·도구 등록 중 하나의 책임만 갖습니다.
+루트 `index.ts`는 그대로 둡니다. `package.json`의 `pi.extensions`가 이 파일을 확장 진입점으로 참조하기 때문입니다. `exports`의 `.`도 이 파일을 가리키며 `./ui`만 별도 공개 컴포넌트 경로입니다. `src/*`는 내부 구현이므로 다른 패키지에서 직접 참조하지 않습니다. [`ui.md`](ui.md)에 반환값과 제출 가드 사용법을 설명합니다. `src/`는 하위 디렉터리 없이 평면 구조이며 각 모듈이 타입·검증·상태·포매팅·렌더링·presence·도구 등록 중 하나의 책임만 갖습니다.
 
 의존 방향은 `types`·`sanitize` → `questions` → `render` → `state` → `component` → `tool` → `index`이며 `keys`는 `component`만, `presence`는 `tool`만 사용합니다. `questions`, `sanitize`, `render`, `state`는 실제 터미널 없이 검증할 수 있습니다. `render`는 ANSI 폭 계산을 위해 `pi-tui` 유틸리티를 사용하지만 TUI 컴포넌트를 만들지 않습니다.
 
@@ -53,7 +54,7 @@ docs/                   — 주제별 문서
 - 답변 의미는 `src/state.ts`에만 둡니다. `src/component.ts`는 키를 상태 전이로 옮기고 스냅샷을 그리는 역할만 합니다.
 - 필터 중에도 답변은 보이는 행이 아니라 원래 옵션 위치로 식별합니다. 필터·뷰포트·숫자 조작을 바꿔도 선택의 `index`와 값이 달라지면 안 됩니다.
 - 다중 선택의 자유 입력 추가분은 하나의 선택으로 계산합니다. 최소·최대 범위 검사, 카운터, 확정 답변이 모두 같은 계산을 써야 합니다.
-- 확정은 단발입니다. `submit`이 여러 번 호출되어도 결과 콜백은 한 번만 실행되어야 합니다.
+- 확정은 단발입니다. `submit`이 여러 번 호출되어도 결과 콜백은 한 번만 실행되어야 합니다. 선택적 동기식 `canSubmit`은 취소가 아닌 제출 직전 상태 머신에서 실행하며, 거부하면 답변과 UI가 살아 있어야 합니다. 취소에는 적용하지 않습니다.
 - 취소는 순서에 의존하지 않아야 합니다. abort가 컴포넌트 mount 전에 도착해도 취소로 수렴해야 하고, 컴포넌트는 그대로 반환해 host가 정리할 수 있어야 합니다.
 - `id`는 공백 제거 후 비교·저장합니다. 다른 사용자 제공 문자열은 자동으로 `trim`하지 않습니다. 예외는 저장 시점의 자유 입력 답변입니다.
 - 렌더 결과는 요청한 폭을 넘지 않아야 합니다. 새 표시 문자열을 추가하면 `wrapLines`/`wrapLinesWithPrefix`를 통과시킵니다. 옵션 뷰포트는 터미널 높이에서 3–10행으로 계산합니다.
@@ -84,6 +85,7 @@ docs/                   — 주제별 문서
 ## 관련 문서
 
 - [`usage.md`](usage.md) — 도구 호출 형식, 검증 규칙, 반환 형식
+- [`ui.md`](ui.md) — 외부 확장용 설문 컴포넌트 공개 경로와 제출 가드
 - [`configuration.md`](configuration.md) — presence 이벤트 계약과 개인정보 범위
 
 ## 문서 작성 방식
@@ -100,7 +102,7 @@ push와 pull request CI는 provider 인증 정보나 네트워크 acceptance를 
 
 | lane | Bun | Pi development graph | install |
 | --- | --- | --- | --- |
-| locked baseline | 1.3.14 (`packageManager`) | `pi-coding-agent`, `pi-tui` exact 0.85.0 lockfile graph | `bun install --frozen-lockfile` |
-| current compatibility | 1.4.2 | 두 선언된 Pi devDependency를 모두 exact 0.85.1로 맞춘 임시 graph | `bun install --no-save` |
+| locked baseline | 1.3.14 (`packageManager`) | `pi-coding-agent`, `pi-tui` exact 0.87.1 lockfile graph | `bun install --frozen-lockfile` |
+| current compatibility | 1.4.2 | Pi 개발 패키지를 모두 exact 0.87.1로 맞춘 임시 graph | `bun install --no-save` |
 
-각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. locked baseline은 Pi stack 이름별 `0.85.0` mapping을, compatibility lane은 `0.85.1` mapping을 사용하며, 선택된 mapping의 모든 package는 정확한 버전으로 설치되어야 합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest에서 선언된 모든 Pi 개발 패키지를 exact `0.85.1`로 선택합니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.
+각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. locked baseline은 Pi stack 이름별 `0.87.1` mapping을, compatibility lane도 Bun 버전 차이만 둔 `0.87.1` mapping을 사용하며, 선택된 mapping의 모든 package는 정확한 버전으로 설치되어야 합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest에서 선언된 모든 Pi 개발 패키지를 exact `0.87.1`로 선택합니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.

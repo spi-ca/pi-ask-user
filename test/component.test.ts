@@ -25,7 +25,15 @@ function question(overrides: Partial<Question> = {}): Question {
   });
 }
 
-function mount(questions: Question[], options: { rows?: number; keybindings?: unknown; theme?: unknown } = {}) {
+function mount(
+  questions: Question[],
+  options: {
+    rows?: number;
+    keybindings?: unknown;
+    theme?: unknown;
+    canSubmit?: (result: QuestionnaireResult) => boolean;
+  } = {},
+) {
   const tui = fakeTui(80, options.rows ?? 40);
   const settled: QuestionnaireResult[] = [];
   const component = createQuestionnaireComponent({
@@ -33,6 +41,7 @@ function mount(questions: Question[], options: { rows?: number; keybindings?: un
     tui: tui as never,
     theme: options.theme ?? fakeTheme(),
     keybindings: options.keybindings,
+    canSubmit: options.canSubmit,
     done: (result) => settled.push(result),
   });
   component.focused = true;
@@ -53,6 +62,74 @@ test("renders the prompt, numbered options, descriptions, and the custom entry",
   expect(output).toContain("2. English");
   expect(output).toContain("3. Type something.");
   expect(output).toContain("↑↓ navigate • 1-9 jump • Enter select • Esc cancel");
+});
+
+test("default no value is selected by Enter even when it is not the first row", () => {
+  const { component, settled } = mount([
+    question({
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ],
+      defaultValues: ["no"],
+      allowOther: false,
+    }),
+  ]);
+  component.handleInput(ENTER);
+  expect(settled[0]!.answers[0]).toMatchObject({ kind: "single", value: "no", index: 2 });
+});
+
+test("keyboard digit and Enter both pass through the guard before settlement", () => {
+  for (const input of ["1", ENTER]) {
+    const attempts: QuestionnaireResult[] = [];
+    const { component, settled, lines } = mount([question({ allowOther: false })], {
+      canSubmit: (result) => {
+        attempts.push(result);
+        return result.answers[0]?.kind === "single" && result.answers[0].value === "en";
+      },
+    });
+    component.handleInput(input);
+    expect(settled).toHaveLength(0);
+    expect(attempts[0]!.answers[0]).toMatchObject({ value: "ko" });
+    expect(lines().join("\n")).toContain("Pick a language");
+    component.handleInput("2");
+    expect(attempts).toHaveLength(2);
+    expect(settled[0]!.answers[0]).toMatchObject({ value: "en" });
+    component.handleInput(ENTER);
+    expect(settled).toHaveLength(1);
+    expect(attempts).toHaveLength(2);
+  }
+});
+
+test("component guard sees original question semantics but cannot mutate live questions or answers", () => {
+  const target = question({ allowOther: true, requireReview: true });
+  let attempts = 0;
+  const { component, settled } = mount([target], {
+    // Enter is bound to editor newline, disabling Other in the interactive copy.
+    keybindings: {
+      matches: (data: string, key: string) =>
+        (data === ENTER && key === "tui.input.newLine") || (data === "\u0013" && key === "tui.select.confirm"),
+      getKeys: (key: string) =>
+        key === "tui.input.submit" ? [] : key === "tui.input.newLine" ? ["enter"] : ["ctrl+s"],
+    },
+    canSubmit: (result) => {
+      attempts++;
+      expect(result.questions[0]!.allowOther).toBe(true);
+      result.questions[0]!.options[0]!.value = "changed";
+      result.questions[0]!.allowOther = false;
+      if (result.answers[0]?.kind === "single") result.answers[0].value = "changed";
+      return attempts > 1;
+    },
+  });
+  component.handleInput("1");
+  component.handleInput("\u0013");
+  expect(settled).toHaveLength(0);
+  expect(target.options[0]!.value).toBe("ko");
+  component.handleInput("\u0013");
+  expect(attempts).toBe(2);
+  expect(settled[0]!.answers[0]).toMatchObject({ value: "ko" });
+  expect(settled[0]!.questions[0]).toBe(target);
+  expect(settled[0]!.questions[0]!.allowOther).toBe(true);
 });
 
 test("a single question hides the tab bar and multiple questions show it", () => {
@@ -842,6 +919,55 @@ function cellX(line: string, text: string): number {
   expect(index).toBeGreaterThanOrEqual(0);
   return visibleWidth(line.slice(0, index));
 }
+
+test("review submission via Enter or a mouse tab uses the same guard", () => {
+  for (const method of ["keyboard", "mouse"]) {
+    let allow = false;
+    const attempts: QuestionnaireResult[] = [];
+    const { component, settled, lines } = mount([question({ requireReview: true, allowOther: false })], {
+      canSubmit: (result) => {
+        attempts.push(result);
+        return allow;
+      },
+    });
+    component.handleInput("1");
+    expect(settled).toHaveLength(0);
+    // Mouse moves to the review tab; Enter is still needed to submit.
+    if (method === "mouse") {
+      const tabLines = lines();
+      const y = lineIndex(tabLines, "Submit");
+      mouse(component, "click", cellX(tabLines[y]!, "Submit"), y);
+    }
+    component.handleInput(ENTER);
+    expect(attempts).toHaveLength(1);
+    expect(settled).toHaveLength(0);
+    allow = true;
+    component.handleInput(ENTER);
+    expect(attempts).toHaveLength(2);
+    expect(settled).toHaveLength(1);
+    component.handleInput(ENTER);
+    expect(settled).toHaveLength(1);
+  }
+});
+
+test("mouse selection passes through the guard; cancel after veto still settles", () => {
+  const attempts: QuestionnaireResult[] = [];
+  const { component, settled, lines } = mount([question({ allowOther: false })], {
+    canSubmit: (result) => {
+      attempts.push(result);
+      return false;
+    },
+  });
+  mouse(component, "click", 4, lineIndex(lines(), "1. Korean"));
+  expect(attempts).toHaveLength(1);
+  expect(settled).toHaveLength(0);
+  component.handleInput(ESCAPE);
+  expect(attempts).toHaveLength(1);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]).toMatchObject({ cancelled: true, cancelReason: "user" });
+  component.cancel();
+  expect(settled).toHaveLength(1);
+});
 
 test("mouse press moves an option cursor and click selects its semantic row", () => {
   const { component, settled, lines } = mount([question()]);
