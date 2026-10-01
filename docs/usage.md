@@ -114,6 +114,19 @@ Targets: macOS, Linux ["macos","linux"]
 Language: Klingon
 ```
 
+`ask_user`는 Pi 0.99.2에서 `exposure: "model-only"`로 등록됩니다. 모델이 직접 호출할 수 있지만 codemode 스크립트나 `ctx.executeTool()`의 중첩 호출 대상은 아닙니다.
+
+`outputSchema`에 대응하는 `structuredContent`는 질문 배열을 제외한 간결한 결과입니다. 기존 텍스트 `content`와 전체 `details`는 그대로 유지하며, 공개 `pi-ask-user/ui`의 `QuestionnaireResult`도 바뀌지 않습니다.
+
+```json
+{
+  "answers": [{ "id": "runtime", "kind": "single", "value": "bun", "label": "Bun", "index": 1 }],
+  "cancelled": false
+}
+```
+
+스키마는 아래 네 답변 종류의 필드를 구분합니다. 답변은 최대 20개, 다중 선택 항목은 최대 50개, `index`는 1–50입니다. 문자열 상한은 기존 정규화와 같은 code point 기준(`id` 64, 옵션 값 200, 옵션 레이블 1000, 자유 입력 2000)입니다. `structuredContent`의 답변·선택 배열과 객체는 `details`와 분리되어 한쪽 변경이 다른 쪽으로 전파되지 않습니다.
+
 `details`에는 정규화된 질문과 답변이 함께 담깁니다.
 
 ```json
@@ -167,7 +180,7 @@ Answered so far:
 Runtime: Bun ["bun"]
 ```
 
-비대화형·잘못된 입력은 각각 앞서 설명한 오류 텍스트를 즉시 반환하지만, 구조화된 결과에는 각각 `"unavailable"`·`"invalid"` 사유를 기록합니다. 접힌 결과 줄은 사용자 취소면 `Cancelled`, 그 밖의 사유면 `Cancelled (aborted)`처럼 표시합니다.
+비대화형·잘못된 입력은 각각 앞서 설명한 오류 텍스트를 즉시 반환하지만, `structuredContent`와 `details`에는 각각 `"unavailable"`·`"invalid"` 사유와 빈 답변 배열을 기록합니다. 사용자 취소·abort는 이미 확정한 부분 답변을 두 결과에 모두 남깁니다. 이 경로들은 기존처럼 `isError`를 설정하거나 예외를 던지지 않습니다. UI 자체의 예외는 계속 호스트로 전파하며, 호스트가 실행 전에 거부한 호출은 이 출력 스키마 보장 대상이 아닙니다. 접힌 결과 줄은 사용자 취소면 `Cancelled`, 그 밖의 사유면 `Cancelled (aborted)`처럼 표시합니다.
 
 ## 표시 동작
 

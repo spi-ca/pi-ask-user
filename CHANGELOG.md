@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v20261001-1
+
+### 변경
+
+- 지원 호스트와 `pi-coding-agent`·`pi-tui` 개발 의존성을 Pi 0.99.2로 맞췄습니다. `ask_user`는 `model-only`로 등록해 모델에 직접 노출하고 codemode·다른 도구의 중첩 호출 대상에서 제외합니다.
+- 답변 종류별 길이·개수 제한이 있는 `outputSchema`와 간결한 `structuredContent`(`answers`, `cancelled`, 선택적 `cancelReason`)를 추가했습니다. 질문 배열은 중복하지 않으며 기존 모델용 텍스트·전체 `details`·공개 UI·제출 가드와 `isError` 미설정 의미를 유지합니다.
+- shared `@pi/presence`를 `github:spi-ca/pi-presence#v2-20261001-1`로 고정하고 현재 문서 링크를 갱신했습니다. V2 채널·alias와 content-free observer 계약은 유지합니다.
+
+### 개발
+
+- CI 현재 graph를 `agent-core`·`ai`·`codemode`·`coding-agent`·`mcp`·`telemetry`·`tui`와 `chord` 전체 exact 0.99.2로 검증합니다. 이전 0.87.1 lane은 회귀 검사로 유지하되 지원 호스트로 보증하지 않습니다.
+- 등록·네 답변 종류·빈/부분 취소·invalid/unavailable/abort 반환의 스키마, mutation 공유 격리와 presence 개인정보 검사를 추가했습니다. provider-free 패키지 smoke도 새 등록·비대화형 결과 계약을 검사합니다.
+
 ## v20260915-1
 
 ### 수정
