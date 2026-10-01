@@ -55,7 +55,7 @@ function run(command: string[], cwd: string, env: Record<string, string>): void 
   if (result.exitCode !== 0) throw new Error(`${command.join(" ")} failed with exit code ${result.exitCode}`);
 }
 
-function smokeStub(packageSpecifier: string, profile: AssertionProfile): string {
+function smokeStub(packageSpecifier: string, profile: AssertionProfile, checkerSpecifier = "typebox/value"): string {
   return `
 const profile = ${JSON.stringify(profile)};
 const calls = [];
@@ -95,6 +95,15 @@ if (profile.extension) {
   requireNames("registerCommand", profile.commands);
   requireNames("on", profile.hooks);
   requireNames("events.on", profile.eventListeners);
+  const askUser = calls.find((call) => call.kind === "registerTool" && call.name === "ask_user")?.value;
+  if (askUser) {
+    if (askUser.exposure !== "model-only" || !askUser.outputSchema) throw new Error("missing ask_user exposure/output schema");
+    const result = await askUser.execute("smoke-unavailable", {}, undefined, undefined, { mode: "headless" });
+    const { Check } = await import(${JSON.stringify(checkerSpecifier)});
+    if (!Check(askUser.outputSchema, result.structuredContent)) throw new Error("invalid structured output");
+    if ("questions" in result.structuredContent || "isError" in result) throw new Error("ask_user output semantics changed");
+    if (result.structuredContent.cancelReason !== "unavailable" || result.content[0]?.text !== "Error: UI not available (running in non-interactive mode)") throw new Error("ask_user unavailable contract changed");
+  }
 } else {
   for (const name of profile.exports ?? []) if (!(name in extension)) throw new Error("missing required named export: " + name);
 }
@@ -173,20 +182,23 @@ async function assertExisting(pkg: PackageManifest, profile: AssertionProfile, e
     const entry = pkg.main;
     if (typeof entry !== "string" || (!entry.startsWith("./") && !entry.endsWith(".ts"))) throw new Error("package.json is missing a local main entry");
     const stub = join(root, "existing-smoke.ts");
-    writeFileSync(stub, smokeStub(pathToFileURL(resolve(process.cwd(), entry)).href, profile));
-    run([process.execPath, stub], process.cwd(), sandboxEnv(root));
+    const checker = pkg.name === "pi-ask-user"
+      ? pathToFileURL(Bun.resolveSync("typebox/value", process.cwd())).href
+      : undefined;
+    writeFileSync(stub, smokeStub(pathToFileURL(resolve(process.cwd(), entry)).href, profile, checker));
+    run([process.execPath, "--no-install", stub], process.cwd(), sandboxEnv(root));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-function runFixture(root: string, name: string, source: string, profile: AssertionProfile, shouldPass: boolean): void {
+function runFixture(root: string, name: string, source: string, profile: AssertionProfile, shouldPass: boolean, checkerSpecifier?: string): void {
   const packageDirectory = join(root, "node_modules", name);
   mkdirSync(packageDirectory, { recursive: true });
   writeFileSync(join(packageDirectory, "package.json"), `${JSON.stringify({ name, type: "module", main: "./index.ts" })}\n`);
   writeFileSync(join(packageDirectory, "index.ts"), source);
-  writeFileSync(join(root, "fixture-smoke.ts"), smokeStub(name, profile));
-  const result = Bun.spawnSync({ cmd: [process.execPath, "fixture-smoke.ts"], cwd: root, env: sandboxEnv(root), stdout: "pipe", stderr: "pipe" });
+  writeFileSync(join(root, "fixture-smoke.ts"), smokeStub(name, profile, checkerSpecifier));
+  const result = Bun.spawnSync({ cmd: [process.execPath, "--no-install", "fixture-smoke.ts"], cwd: root, env: sandboxEnv(root), stdout: "pipe", stderr: "pipe" });
   if ((result.exitCode === 0) !== shouldPass) {
     throw new Error(`fixture ${name} ${shouldPass ? "did not pass" : "did not fail"}: ${result.stderr.toString()}`);
   }
@@ -202,7 +214,16 @@ function selfTest(): void {
     const libraryProfile: AssertionProfile = { extension: false, exports: ["EVENT_NAMES", "createPresenceProducer"] };
     runFixture(root, "valid-library", 'export const EVENT_NAMES = {}; export const createPresenceProducer = () => undefined;\n', libraryProfile, true);
     runFixture(root, "missing-library-export", 'export const EVENT_NAMES = {};\n', libraryProfile, false);
-    console.log("generated assertion stub accepted valid fixtures and rejected malformed fixtures");
+    const checker = pathToFileURL(Bun.resolveSync("typebox/value", process.cwd())).href;
+    const schema = pathToFileURL(resolve("src/result.ts")).href;
+    const askFixture = `import { QuestionnaireOutput } from ${JSON.stringify(schema)};
+export default function(pi) { pi.registerTool({ name: "ask_user", exposure: "model-only", outputSchema: QuestionnaireOutput,
+execute: async () => ({ content: [{ type: "text", text: "Error: UI not available (running in non-interactive mode)" }],
+structuredContent: { answers: [], cancelled: true, cancelReason: "unavailable" } }) }); }`;
+    const askProfile: AssertionProfile = { extension: true, tools: ["ask_user"] };
+    runFixture(root, "valid-ask", askFixture, askProfile, true, checker);
+    runFixture(root, "invalid-ask", askFixture.replace("answers: []", "answers: [null]"), askProfile, false, checker);
+    console.log("generated assertion stub accepted valid fixtures and rejected malformed fixtures without auto-install");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -227,17 +248,17 @@ async function main(): Promise<void> {
     run([process.execPath, "pm", "pack", "--quiet", "--destination", packDirectory], process.cwd(), env);
     const tarballs = readdirSync(packDirectory).filter((name) => name.endsWith(".tgz"));
     if (tarballs.length !== 1) throw new Error(`expected one tarball, found ${tarballs.join(", ") || "none"}`);
-    writeFileSync(join(consumer, "package.json"), `${JSON.stringify({ name: "package-smoke-consumer", private: true, type: "module", dependencies: { [pkg.name]: `file:${resolve(packDirectory, tarballs[0])}`, ...matrixPi, ...nonPiPeers } }, null, 2)}\n`);
+    writeFileSync(join(consumer, "package.json"), `${JSON.stringify({ name: "package-smoke-consumer", private: true, type: "module", dependencies: { [pkg.name]: `file:${resolve(packDirectory, tarballs[0])}`, ...matrixPi, ...nonPiPeers }, overrides: matrixPi }, null, 2)}\n`);
     run([process.execPath, "install", "--ignore-scripts"], consumer, env);
     if (profile.extension) {
       const { verifyPiGraph } = await import("./verify-pi-graph.ts");
       verifyPiGraph(join(consumer, "node_modules"), matrixPi, Object.keys(matrixPi));
     }
     writeFileSync(join(consumer, "smoke.ts"), smokeStub(pkg.name, profile));
-    run([process.execPath, "smoke.ts"], consumer, env);
+    run([process.execPath, "--no-install", "smoke.ts"], consumer, env);
     if (pkg.name === "pi-ask-user") {
       writeFileSync(join(consumer, "ui-smoke.ts"), smokeUi(pkg.name));
-      run([process.execPath, "ui-smoke.ts"], consumer, env);
+      run([process.execPath, "--no-install", "ui-smoke.ts"], consumer, env);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

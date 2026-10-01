@@ -10,6 +10,7 @@ import { createQuestionnaireComponent, type QuestionnaireComponent } from "./com
 import { AskUserPresence } from "./presence.ts";
 import { answerLabels, answerValues, MAX_QUESTIONS, normalizeQuestions, QuestionnaireParams } from "./questions.ts";
 import { answerPrefix } from "./render.ts";
+import { QuestionnaireOutput, type StructuredQuestionnaireResult, structuredResult } from "./result.ts";
 import { sanitizeDisplayText } from "./sanitize.ts";
 import type { Answer, CancelReason, Question, QuestionnaireResult } from "./types.ts";
 
@@ -41,6 +42,7 @@ export const RESULT_TOO_LARGE_MESSAGE =
 interface ToolErrorResult {
   content: { type: "text"; text: string }[];
   details: QuestionnaireResult;
+  structuredContent: StructuredQuestionnaireResult;
 }
 
 /** Error and non-interactive results are reported as a cancelled questionnaire. */
@@ -49,9 +51,11 @@ export function errorResult(
   questions: Question[] = [],
   reason: CancelReason = "invalid",
 ): ToolErrorResult {
+  const details: QuestionnaireResult = { questions, answers: [], cancelled: true, cancelReason: reason };
   return {
     content: [{ type: "text", text: message }],
-    details: { questions, answers: [], cancelled: true, cancelReason: reason },
+    details,
+    structuredContent: structuredResult(details),
   };
 }
 
@@ -266,6 +270,9 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
     description: TOOL_DESCRIPTION,
     parameters: QuestionnaireParams,
     executionMode: "sequential",
+    // Keep legacy registration structurally loadable; only 0.99.2 is supported
+    // for the host-enforced exposure and structured output contracts.
+    ...{ exposure: "model-only" as const, outputSchema: QuestionnaireOutput },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (ctx.mode !== "tui") {
@@ -317,12 +324,14 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
           return {
             content: [{ type: "text", text: formatCancelledText(result) }],
             details: result,
+            structuredContent: structuredResult(result),
           };
         }
 
         return {
           content: [{ type: "text", text: formatResultText(result) }],
           details: result,
+          structuredContent: structuredResult(result),
         };
       } finally {
         component = null;

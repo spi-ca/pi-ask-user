@@ -1,7 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EVENT_NAMES } from "@pi/presence";
+import { Check } from "typebox/value";
 import askUser from "../index.ts";
+import { QuestionnaireOutput, type StructuredQuestionnaireResult } from "../src/result.ts";
 import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
 import { fakeTheme, fakeTui } from "./helpers/fake-theme.ts";
@@ -19,13 +21,20 @@ type RegisteredTool = {
   description: string;
   parameters: unknown;
   executionMode: string;
+  exposure: string;
+  outputSchema: typeof QuestionnaireOutput;
   execute: (
     toolCallId: string,
     params: unknown,
     signal: AbortSignal | undefined,
     onUpdate: undefined,
     ctx: ExtensionContext,
-  ) => Promise<{ content: { type: string; text: string }[]; details?: unknown }>;
+  ) => Promise<{
+    content: { type: string; text: string }[];
+    details?: unknown;
+    structuredContent: StructuredQuestionnaireResult;
+    isError?: boolean;
+  }>;
   renderCall: (args: unknown, theme: unknown, context: unknown) => { text?: string };
   renderResult: (
     result: { content: { type: string; text: string }[]; details?: unknown },
@@ -275,6 +284,20 @@ function cancelledResultContext(sessionId = QUESTIONNAIRE_SENTINELS[8]): Extensi
   } as unknown as ExtensionContext;
 }
 
+function assertStructuredResult(tool: RegisteredTool, result: Awaited<ReturnType<RegisteredTool["execute"]>>): void {
+  const details = result.details as QuestionnaireResult;
+  expect(Check(tool.outputSchema, result.structuredContent)).toBe(true);
+  expect(result.structuredContent).toEqual({
+    answers: details.answers,
+    cancelled: details.cancelled,
+    ...(details.cancelReason === undefined ? {} : { cancelReason: details.cancelReason }),
+  });
+  expect(result.structuredContent).not.toHaveProperty("questions");
+  // Returning an error-looking text never set isError before this migration.
+  expect(result).not.toHaveProperty("isError");
+  expect(result.structuredContent.answers).not.toBe(details.answers);
+}
+
 test("the entrypoint keeps the public tool registration contract", () => {
   const { hooks, events, tools, tool } = register();
 
@@ -283,6 +306,8 @@ test("the entrypoint keeps the public tool registration contract", () => {
   expect(tool.label).toBe(TOOL_LABEL);
   expect(tool.description).toBe(TOOL_DESCRIPTION);
   expect(tool.executionMode).toBe("sequential");
+  expect(tool.exposure).toBe("model-only");
+  expect(tool.outputSchema).toBe(QuestionnaireOutput);
   expect(hooks).toEqual(["session_start", "session_shutdown"]);
   expect(events).toEqual([]);
 });
@@ -297,6 +322,7 @@ test("non-interactive sessions return the UI-unavailable error", async () => {
   const details = result.details as QuestionnaireResult;
   expect(details.cancelled).toBe(true);
   expect(details.cancelReason).toBe("unavailable");
+  assertStructuredResult(tool, result);
 });
 
 test("invalid parameters are rejected before the UI opens", async () => {
@@ -316,6 +342,7 @@ test("invalid parameters are rejected before the UI opens", async () => {
   const result = await tool.execute("call-1", { questions: [] }, undefined, undefined, ctx);
   expect(result.content[0]!.text).toBe("Error: No questions provided");
   expect(opened).toBe(false);
+  assertStructuredResult(tool, result);
 });
 
 test("a completed questionnaire returns labeled text and structured details", async () => {
@@ -326,6 +353,7 @@ test("a completed questionnaire returns labeled text and structured details", as
   const details = result.details as QuestionnaireResult;
   expect(details.cancelled).toBe(false);
   expect(details.answers).toEqual([{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }]);
+  assertStructuredResult(tool, result);
 });
 
 test("digit keys select an option directly", async () => {
@@ -343,6 +371,7 @@ test("a cancelled questionnaire reports the reason and any partial answers", asy
   const details = result.details as QuestionnaireResult;
   expect(details.cancelled).toBe(true);
   expect(details.cancelReason).toBe("user");
+  assertStructuredResult(tool, result);
 });
 
 test("an already aborted signal cancels the questionnaire as aborted", async () => {
@@ -353,6 +382,7 @@ test("an already aborted signal cancels the questionnaire as aborted", async () 
   const result = await tool.execute("call-1", SINGLE_QUESTION, controller.signal, undefined, tuiContext([]));
   expect(result.content[0]!.text).toContain("the tool call was aborted");
   expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
+  assertStructuredResult(tool, result);
 });
 
 test("an abort before the component mounts still cancels", async () => {
@@ -369,6 +399,7 @@ test("an abort before the component mounts still cancels", async () => {
   );
   expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
   expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
+  assertStructuredResult(tool, result);
 });
 
 test("an abort while the questionnaire is open cancels it", async () => {
@@ -380,6 +411,7 @@ test("an abort while the questionnaire is open cancels it", async () => {
   const result = await pending;
   expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
   expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
+  assertStructuredResult(tool, result);
 });
 
 test("abort listeners are removed after settled success and rejected UI paths", async () => {
@@ -406,6 +438,8 @@ test("V2 presence follows tool success, cancellation, abort, UI failures, and sh
   expect((successResult.details as QuestionnaireResult).answers).toMatchObject([
     { kind: "custom", value: QUESTIONNAIRE_SENTINELS[6] },
   ]);
+  assertStructuredResult(success.tool, successResult);
+  expect(JSON.stringify(successResult.structuredContent)).toContain(QUESTIONNAIRE_SENTINELS[6]);
   assertPrivateToolPresence(success, successConsumer);
   closeToolPresence(success, successConsumer);
 
@@ -626,4 +660,96 @@ test("renderResult falls back to the plain content text without details", () => 
     {},
   ) as { text: string };
   expect(result.text).toBe(NON_INTERACTIVE_MESSAGE);
+});
+
+test("structured output covers multi, custom-only multi, custom, and skipped UI answers", async () => {
+  const { tool } = register();
+  const base = SINGLE_QUESTION.questions[0]!;
+  const cases = [
+    { question: { ...base, multiSelect: true }, keys: ["1", "2", "3", "extra", "\r"], kind: "multi" },
+    { question: { ...base, multiSelect: true }, keys: ["3", "extra", "\r"], kind: "multi" },
+    { question: base, keys: ["3", "extra", "\r"], kind: "custom" },
+    { question: { ...base, optional: true }, keys: ["4"], kind: "skipped" },
+  ];
+  for (const { question, keys, kind } of cases) {
+    const result = await tool.execute("variants", { questions: [question] }, undefined, undefined, tuiContext(keys));
+    assertStructuredResult(tool, result);
+    expect(result.structuredContent.answers[0]?.kind as string).toBe(kind);
+  }
+});
+
+test("structured cancellation keeps partial answers and the model-visible text", async () => {
+  const { tool } = register();
+  const questions = [SINGLE_QUESTION.questions[0]!, { ...SINGLE_QUESTION.questions[0]!, id: "next" }];
+  const result = await tool.execute("partial", { questions }, undefined, undefined, tuiContext(["2", "\u001b"]));
+  assertStructuredResult(tool, result);
+  expect(result.structuredContent).toMatchObject({
+    cancelled: true,
+    cancelReason: "user",
+    answers: [{ id: "lang", kind: "single", value: "en", index: 2 }],
+  });
+  expect(result.content[0]!.text).toBe(
+    `${CANCELLED_MESSAGE} (the user cancelled)\nAnswered so far:\nLanguage: English ["en"]`,
+  );
+});
+
+test("structured output and details detach nested answers in both mutation directions", async () => {
+  const { tool } = register();
+  const result = await tool.execute(
+    "sharing",
+    {
+      questions: [{ ...SINGLE_QUESTION.questions[0]!, multiSelect: true }],
+    },
+    undefined,
+    undefined,
+    tuiContext(["1", "2", "3", "extra", "\r"]),
+  );
+  assertStructuredResult(tool, result);
+  const details = result.details as QuestionnaireResult;
+  const machine = result.structuredContent.answers[0]!;
+  const ui = details.answers[0]!;
+  if (machine.kind !== "multi" || ui.kind !== "multi") throw new Error("expected multi answer");
+  expect(machine).not.toBe(ui);
+  expect(machine.selections).not.toBe(ui.selections);
+  expect(machine.selections[0]).not.toBe(ui.selections[0]);
+  machine.selections[0]!.value = "changed-machine";
+  machine.custom = "changed-machine";
+  expect(ui.selections[0]!.value).toBe("ko");
+  expect(ui.custom).toBe("extra");
+  ui.selections[1]!.label = "changed-ui";
+  ui.custom = "changed-ui";
+  expect(machine.selections[1]!.label).toBe("English");
+  expect(machine.custom).toBe("changed-machine");
+  expect(result.content[0]!.text).toBe('Language: Korean, English, extra ["ko","en","extra"]');
+});
+
+test("oversized result rejection also satisfies the output schema without changing isError", async () => {
+  const { tool } = register();
+  const questions = Array.from({ length: 20 }, (_, index) => ({
+    ...SINGLE_QUESTION.questions[0]!,
+    id: `q${index}`,
+    otherMaxLength: 2000,
+  }));
+  const result = await tool.execute("oversize", { questions }, undefined, undefined, tuiContext([]));
+  assertStructuredResult(tool, result);
+  expect(result.structuredContent).toEqual({ answers: [], cancelled: true, cancelReason: "invalid" });
+  expect((result.details as QuestionnaireResult).questions).toHaveLength(20);
+  expect(result.content[0]!.text).toContain("could exceed Pi's 50KB");
+});
+
+test("aborted structured output also preserves already recorded partial answers", async () => {
+  const { tool } = register();
+  const controller = new AbortController();
+  const questions = [SINGLE_QUESTION.questions[0]!, { ...SINGLE_QUESTION.questions[0]!, id: "next" }];
+  const pending = tool.execute("partial-abort", { questions }, controller.signal, undefined, tuiContext(["2"]));
+  queueMicrotask(() => controller.abort());
+  const result = await pending;
+  assertStructuredResult(tool, result);
+  expect(result.structuredContent).toMatchObject({
+    cancelled: true,
+    cancelReason: "aborted",
+    answers: [{ value: "en" }],
+  });
+  expect(result.content[0]!.text).toContain("the tool call was aborted");
+  expect(result.content[0]!.text).toContain('Language: English ["en"]');
 });

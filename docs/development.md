@@ -2,7 +2,7 @@
 
 ## 도구와 타입 경로
 
-이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.87.1`이지만 optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않습니다.
+이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.99.2`이며 지원 호스트도 Pi `0.99.2`입니다. optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않지만, 이전 버전 지원을 보증하지 않습니다. 전체 Pi runtime graph와 `chord`도 `overrides`로 exact `0.99.2`에 고정해 transitive range drift를 막습니다.
 
 ```bash
 bun install --frozen-lockfile
@@ -29,6 +29,7 @@ src/render.ts           — 폭 계산, 뷰포트, 매달린 들여쓰기, 옵�
 src/keys.ts             — Pi 키 바인딩 해석과 기본값 대체
 src/component.ts        — 상태 머신을 Pi TUI에 연결하는 키 처리·편집기·테마 렌더링
 src/presence.ts         — 선택적 process-local presence producer
+src/result.ts           — 간결한 도구 출력 스키마와 details에서 분리된 답변 스냅샷
 src/tool.ts             — ask_user 도구 등록, 결과 형성, 취소 처리
 test/questions.test.ts  — 정규화, 기본값·범위·크기 제한, 오류 메시지, 선택된 스키마 제약 테스트
 test/sanitize.test.ts   — 표시 문자열 정제와 code-point 절단 테스트
@@ -37,15 +38,16 @@ test/render.test.ts     — 폭 경계, 뷰포트, 들여쓰기, 옵션·요약�
 test/keys.test.ts       — 사용자 키 바인딩, 표시 레이블, fallback 테스트
 test/component.test.ts  — 실제 pi-tui 편집기와 fake TUI/theme으로 키 입력부터 렌더 출력까지 검증
 test/presence.test.ts   — shared consumer fanout으로 ask-user projection lifecycle, 실패 격리, 개인정보 canary 테스트
+test/result.test.ts     — 답변 variant별 출력 스키마, code-point·배열·index 상한, 스냅샷 테스트
 test/tool.test.ts       — 오류 결과, 결과 텍스트, 호출 라벨 포매팅 테스트
-test/entrypoint.test.ts — 등록 표면, 비대화형 경로, 완료·취소·abort 경로, 렌더러 테스트
+test/entrypoint.test.ts — model-only·출력 스키마 등록, 실제 답변·부분 취소 스키마, mutation 격리·presence 비노출, 렌더러 테스트
 test/helpers/           — fake theme·fake TUI, 정규화 기본값 질문 factory(`question.ts`), shared consumer/event-bus test helper
 docs/                   — 주제별 문서
 ```
 
 루트 `index.ts`는 그대로 둡니다. `package.json`의 `pi.extensions`가 이 파일을 확장 진입점으로 참조하기 때문입니다. `exports`의 `.`도 이 파일을 가리키며 `./ui`만 별도 공개 컴포넌트 경로입니다. `src/*`는 내부 구현이므로 다른 패키지에서 직접 참조하지 않습니다. [`ui.md`](ui.md)에 반환값과 제출 가드 사용법을 설명합니다. `src/`는 하위 디렉터리 없이 평면 구조이며 각 모듈이 타입·검증·상태·포매팅·렌더링·presence·도구 등록 중 하나의 책임만 갖습니다.
 
-의존 방향은 `types`·`sanitize` → `questions` → `render` → `state` → `component` → `tool` → `index`이며 `keys`는 `component`만, `presence`는 `tool`만 사용합니다. `questions`, `sanitize`, `render`, `state`는 실제 터미널 없이 검증할 수 있습니다. `render`는 ANSI 폭 계산을 위해 `pi-tui` 유틸리티를 사용하지만 TUI 컴포넌트를 만들지 않습니다.
+의존 방향은 `types`·`sanitize` → `questions` → `render` → `state` → `component` → `tool` → `index`이며, `result`는 `questions`·`sanitize`·`types`에 의존하고 `tool`에서만 사용하며 `keys`는 `component`만, `presence`는 `tool`만 사용합니다. `questions`, `sanitize`, `render`, `state`는 실제 터미널 없이 검증할 수 있습니다. `render`는 ANSI 폭 계산을 위해 `pi-tui` 유틸리티를 사용하지만 TUI 컴포넌트를 만들지 않습니다.
 
 ## 변경 불변 조건
 
@@ -68,7 +70,8 @@ docs/                   — 주제별 문서
 - presence는 관찰용입니다. shared producer 생성·발행·철회·비활성화 또는 event-bus 전달 실패와 소비자 부재가 질문 실패로 이어져서는 안 됩니다. source 점유로 활성화가 실패해도 session epoch·pending 요청·token accounting을 초기화하지 않고 나중에 재시도합니다.
 - shared protocol의 lifecycle·ordinal·replay·fence 규칙을 이 저장소에 구현하거나 문서로 복제하지 않습니다. ask-user의 pending projection만 유지하며, 상세 계약은 [`configuration.md`](configuration.md)의 immutable shared-document 링크를 따릅니다.
 - presence payload에 질문·옵션·답변 내용을 넣지 않습니다. 새 필드를 추가하면 [`configuration.md`](configuration.md)의 개인정보 범위와 canary 테스트를 함께 갱신합니다.
-- 도구는 `sequential` 실행 모드를 유지합니다. 동시 질문이 TUI를 경합하지 않게 하기 위한 것입니다.
+- 도구는 `sequential` 실행 모드와 `model-only` 노출을 유지합니다. 동시 질문의 TUI 경합과 프로그램 경유의 중첩 질문을 막습니다.
+- `structuredContent`는 질문을 제외한 `{ answers, cancelled, cancelReason? }`이며 반환 경로마다 출력 스키마를 만족해야 합니다. 기존 `content`·`details`와 `isError` 미설정 의미를 유지하고, 구조화 답변 객체·선택 배열을 `details`와 공유하지 않습니다. presence에는 이 결과를 전달하지 않습니다.
 
 ## 검증 범위
 
@@ -80,7 +83,7 @@ docs/                   — 주제별 문서
 
 ### 연동 경계
 
-이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20260907-1`](https://github.com/spi-ca/pi-presence/tree/v2-20260907-1)에 정확히 고정합니다.
+이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20261001-1`](https://github.com/spi-ca/pi-presence/tree/v2-20261001-1)에 정확히 고정합니다.
 
 ## 관련 문서
 
@@ -98,11 +101,12 @@ docs/                   — 주제별 문서
 
 ## 자동 CI 호환성 매트릭스
 
-push와 pull request CI는 provider 인증 정보나 네트워크 acceptance를 실행하지 않습니다. `bun run ci`, `bun pm pack --dry-run`, 그리고 tarball을 격리된 임시 consumer에 설치해 registration stub으로 import하는 smoke를 실행합니다. smoke는 lifecycle script를 끄고 `KIRO_API_KEY`를 제거하며 `PI_OFFLINE=1`을 설정합니다. CI는 다음 두 lane에서 선택한 Bun 버전과 `cc`의 위치·버전을 로그로 확인합니다.
+push와 pull request CI는 provider 인증 정보나 네트워크 acceptance를 실행하지 않습니다. `bun run ci`, `bun pm pack --dry-run`, 그리고 tarball을 격리된 임시 consumer에 설치해 registration stub으로 import하는 smoke를 실행합니다. smoke는 lifecycle script를 끄고 `KIRO_API_KEY`를 제거하며 `PI_OFFLINE=1`을 설정합니다. CI는 다음 세 lane에서 선택한 Bun 버전과 `cc`의 위치·버전을 로그로 확인합니다.
 
 | lane | Bun | Pi development graph | install |
 | --- | --- | --- | --- |
-| locked baseline | 1.3.14 (`packageManager`) | `pi-coding-agent`, `pi-tui` exact 0.87.1 lockfile graph | `bun install --frozen-lockfile` |
-| current compatibility | 1.4.2 | Pi 개발 패키지를 모두 exact 0.87.1로 맞춘 임시 graph | `bun install --no-save` |
+| locked baseline | 1.3.14 (`packageManager`) | exact 0.99.2 lockfile graph | `bun install --frozen-lockfile` |
+| current compatibility | 1.4.2 | 전체 runtime package를 exact 0.99.2로 맞춘 임시 graph | `bun install --no-save` |
+| legacy regression (not supported host) | 1.4.2 | 이전 exact 0.87.1 graph | `bun install --no-save` |
 
-각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. locked baseline은 Pi stack 이름별 `0.87.1` mapping을, compatibility lane도 Bun 버전 차이만 둔 `0.87.1` mapping을 사용하며, 선택된 mapping의 모든 package는 정확한 버전으로 설치되어야 합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest에서 선언된 모든 Pi 개발 패키지를 exact `0.87.1`로 선택합니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.
+각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. 현재 graph는 `pi-agent-core`·`pi-ai`·`pi-codemode`·`pi-coding-agent`·`pi-mcp`·`pi-telemetry`·`pi-tui`와 `@earendil-works/chord`를 모두 exact `0.99.2`로 검사합니다. runtime에 없는 obsolete `pi-client`·`pi-protocol`이 설치되면 실패합니다. legacy graph는 codemode·mcp 없는 이전 stack과 chord를 exact `0.87.1`로 검사합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility/legacy lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest의 개발 의존성과 overrides를 선택된 exact graph로 맞춥니다. legacy lane은 이전 TUI/state/import의 회귀 검사용이며, 이전 호스트가 새 `exposure`·`outputSchema` 계약을 적용한다는 증거가 아닙니다. 지원 범위는 Pi 0.99.2입니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.

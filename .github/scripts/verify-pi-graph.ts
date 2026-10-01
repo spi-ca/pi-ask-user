@@ -30,7 +30,7 @@ export function installedPiPackages(root: string): Map<string, Set<string>> {
     const manifest = join(directory, "package.json");
     if (!existsSync(manifest)) return;
     const pkg = packageVersion(manifest);
-    if (!pkg.name.startsWith("@earendil-works/pi-")) return;
+    if (!pkg.name.startsWith("@earendil-works/pi-") && pkg.name !== "@earendil-works/chord") return;
     const expectedDirectoryName = pkg.name.slice("@earendil-works/".length);
     if (directory.split("/").at(-1) !== expectedDirectoryName) {
       throw new Error(`unexpected Pi package identity in ${manifest}: ${pkg.name}`);
@@ -117,7 +117,16 @@ function selfTest(): void {
     writeFileSync(join(nested, "package.json"), '{"name":"@earendil-works/pi-tui","version":"9.9.9"}\n');
     expectFailure(() => verifyPiGraph(nodeModules, expected, ["@earendil-works/pi-ai"]), "a mismatched Pi package nested below a non-Pi scope");
     writeFileSync(join(nested, "package.json"), '{"name":"@earendil-works/pi-tui","version":"1.2.3"}\n');
-    expectFailure(() => verifyPiGraph(nodeModules, { ...expected, "@earendil-works/pi-client": "1.2.3" }, ["@earendil-works/pi-ai"]), "a missing expected Pi dependency");
+    expectFailure(() => verifyPiGraph(nodeModules, { ...expected, "@earendil-works/pi-mcp": "1.2.3" }, ["@earendil-works/pi-ai"]), "a missing expected Pi dependency");
+    writePackage(join(nodeModules, "@earendil-works/chord"), "@earendil-works/chord", "1.2.3");
+    expectFailure(() => verifyPiGraph(nodeModules, expected, []), "an untracked chord dependency");
+    verifyPiGraph(nodeModules, { ...expected, "@earendil-works/chord": "1.2.3" }, []);
+    for (const name of ["pi-client", "pi-protocol"]) {
+      const directory = join(nodeModules, "@earendil-works", name);
+      writePackage(directory, `@earendil-works/${name}`, "1.2.3");
+      expectFailure(() => verifyPiGraph(nodeModules, { ...expected, "@earendil-works/chord": "1.2.3" }, []), `an obsolete ${name} dependency`);
+      rmSync(directory, { recursive: true });
+    }
     console.log("synthetic generic scoped and cyclic Bun graph verified");
   } finally {
     rmSync(root, { recursive: true, force: true });
