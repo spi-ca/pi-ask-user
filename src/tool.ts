@@ -270,7 +270,7 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
     description: TOOL_DESCRIPTION,
     parameters: QuestionnaireParams,
     executionMode: "sequential",
-    // Keep legacy registration structurally loadable; only 0.99.2 is supported
+    // Keep legacy registration structurally loadable; only 1.0.2 is supported
     // for the host-enforced exposure and structured output contracts.
     ...{ exposure: "model-only" as const, outputSchema: QuestionnaireOutput },
 

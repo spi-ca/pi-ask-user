@@ -1,6 +1,10 @@
 # 변경 이력
 
-## Unreleased
+## v20261004-1
+
+- Shared `@pi/presence`를 immutable `v2-20261004-1`로 동기화했습니다. 기존 release와 peeled commit·V2 protocol·ABI는 같습니다.
+
+- 지원 호스트·개발 의존성·lockfile·current CI graph를 exact Pi `1.0.2`로 동기화했습니다. 도구·답변·presence 계약은 유지합니다.
 
 ## v20261001-1
 
