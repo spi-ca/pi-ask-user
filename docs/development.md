@@ -2,7 +2,7 @@
 
 ## 도구와 타입 경로
 
-이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `0.99.2`이며 지원 호스트도 Pi `0.99.2`입니다. optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않지만, 이전 버전 지원을 보증하지 않습니다. 전체 Pi runtime graph와 `chord`도 `overrides`로 exact `0.99.2`에 고정해 transitive range drift를 막습니다.
+이 패키지는 `package.json`의 `packageManager`에 선언된 `bun@1.3.14`를 사용합니다. Pi 타입은 devDependency `@earendil-works/pi-coding-agent`와 `@earendil-works/pi-tui`의 `node_modules` 설치본에서 해석됩니다. 개발 의존성은 exact `1.0.2`이며 지원 호스트도 Pi `1.0.2`입니다. optional peer dependency는 `*`이므로 소비자의 Pi 최소 버전을 메타데이터로 강제하지 않지만, 이전 버전 지원을 보증하지 않습니다. 전체 Pi runtime graph와 `chord`도 `overrides`로 exact `1.0.2`에 고정해 transitive range drift를 막습니다.
 
 ```bash
 bun install --frozen-lockfile
@@ -83,7 +83,7 @@ docs/                   — 주제별 문서
 
 ### 연동 경계
 
-이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20261001-1`](https://github.com/spi-ca/pi-presence/tree/v2-20261001-1)에 정확히 고정합니다.
+이 패키지는 fake TUI/theme과 same-process event bus까지만 검증합니다. socket, CLI, polling, process 실행, persistent connection, background daemon을 구현하거나 검증하지 않습니다. 실제 환경에서는 설치된 shared consumer의 local presentation만 별도로 확인할 수 있습니다. 공유 protocol dependency는 [`github:spi-ca/pi-presence#v2-20261004-1`](https://github.com/spi-ca/pi-presence/tree/v2-20261004-1)에 정확히 고정합니다.
 
 ## 관련 문서
 
@@ -105,8 +105,8 @@ push와 pull request CI는 provider 인증 정보나 네트워크 acceptance를 
 
 | lane | Bun | Pi development graph | install |
 | --- | --- | --- | --- |
-| locked baseline | 1.3.14 (`packageManager`) | exact 0.99.2 lockfile graph | `bun install --frozen-lockfile` |
-| current compatibility | 1.4.2 | 전체 runtime package를 exact 0.99.2로 맞춘 임시 graph | `bun install --no-save` |
+| locked baseline | 1.3.14 (`packageManager`) | exact 1.0.2 lockfile graph | `bun install --frozen-lockfile` |
+| current compatibility | 1.4.2 | 전체 runtime package를 exact 1.0.2로 맞춘 임시 graph | `bun install --no-save` |
 | legacy regression (not supported host) | 1.4.2 | 이전 exact 0.87.1 graph | `bun install --no-save` |
 
-각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. 현재 graph는 `pi-agent-core`·`pi-ai`·`pi-codemode`·`pi-coding-agent`·`pi-mcp`·`pi-telemetry`·`pi-tui`와 `@earendil-works/chord`를 모두 exact `0.99.2`로 검사합니다. runtime에 없는 obsolete `pi-client`·`pi-protocol`이 설치되면 실패합니다. legacy graph는 codemode·mcp 없는 이전 stack과 chord를 exact `0.87.1`로 검사합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility/legacy lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest의 개발 의존성과 overrides를 선택된 exact graph로 맞춥니다. legacy lane은 이전 TUI/state/import의 회귀 검사용이며, 이전 호스트가 새 `exposure`·`outputSchema` 계약을 적용한다는 증거가 아닙니다. 지원 범위는 Pi 0.99.2입니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.
+각 lane의 repository 설치 graph verifier는 Bun의 hoisted link와 `.bun` store 안의 nested symlink를 모두 순회해 설치된 모든 `@earendil-works/pi-*`의 버전을 확인합니다. 현재 graph는 `pi-agent-core`·`pi-ai`·`pi-codemode`·`pi-coding-agent`·`pi-mcp`·`pi-telemetry`·`pi-tui`와 `@earendil-works/chord`를 모두 exact `1.0.2`로 검사합니다. runtime에 없는 obsolete `pi-client`·`pi-protocol`이 설치되면 실패합니다. legacy graph는 codemode·mcp 없는 이전 stack과 chord를 exact `0.87.1`로 검사합니다. 별도로 tarball smoke의 격리 consumer는 wildcard 또는 transitive drift를 막는 결정적 호환성 harness로서 선택된 전체 exact Pi graph와 선언된 non-Pi peer를 의도적으로 주입합니다. 이는 최소 peer 설치를 증명하는 검사는 아닙니다. compatibility/legacy lane은 optional peer의 `*`가 최신 버전을 고르게 두지 않고 임시 manifest의 개발 의존성과 overrides를 선택된 exact graph로 맞춥니다. legacy lane은 이전 TUI/state/import의 회귀 검사용이며, 이전 호스트가 새 `exposure`·`outputSchema` 계약을 적용한다는 증거가 아닙니다. 지원 범위는 Pi 1.0.2입니다. 작업 뒤 manifest와 lockfile은 원래 상태인지 검사하므로 lockfile 변경을 만들지 않습니다. 이는 hosted CI의 구성 범위이며, 로컬에서 재설치·다운로드하거나 실제 Pi TUI/provider acceptance를 수행했다는 뜻은 아닙니다.
