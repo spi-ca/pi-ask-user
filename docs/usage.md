@@ -114,7 +114,7 @@ Targets: macOS, Linux ["macos","linux"]
 Language: Klingon
 ```
 
-`ask_user`는 Pi 1.0.2에서 `exposure: "model-only"`로 등록됩니다. 모델이 직접 호출할 수 있지만 codemode 스크립트나 `ctx.executeTool()`의 중첩 호출 대상은 아닙니다.
+`ask_user`는 Pi 1.1.0에서 `exposure: "model-only"`로 등록됩니다. 모델이 직접 호출할 수 있지만 codemode 스크립트나 `ctx.executeTool()`의 중첩 호출 대상은 아닙니다.
 
 `outputSchema`에 대응하는 `structuredContent`는 질문 배열을 제외한 간결한 결과입니다. 기존 텍스트 `content`와 전체 `details`는 그대로 유지하며, 공개 `pi-ask-user/ui`의 `QuestionnaireResult`도 바뀌지 않습니다.
 
