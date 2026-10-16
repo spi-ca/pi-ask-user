@@ -1,5 +1,9 @@
 # 변경 이력
 
+## v20261016-1
+
+- 지원 호스트·개발 의존성·override·lockfile·현재 CI graph를 exact Pi `1.3.0`으로 갱신합니다. optional peer·Git 의존성·공개 UI·답변·presence 계약은 유지합니다.
+
 ## v20261013-1
 
 - 지원 호스트·개발 의존성·override·lockfile·현재 CI graph를 exact Pi `1.2.0`으로 갱신하고, 현재 graph에서 더 이상 사용하지 않는 `chord`를 제거했습니다. 구버전 회귀 lane은 유지합니다.
