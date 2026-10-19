@@ -249,6 +249,9 @@ export function createKeyResolver(keybindings: unknown): KeyResolver {
       return fallbackKeysFor(action).some((keyId) => matchesKey(data, keyId));
     },
     label(action) {
+      // A matcher-only manager may rebind every default. Do not advertise a
+      // guessed key when the host cannot report the configured binding.
+      if (manager && resolvedKeys(action) === undefined) return "Configured key";
       const [first] = keysFor(action);
       return first ? keyLabel(first) : "Unbound";
     },

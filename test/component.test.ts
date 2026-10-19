@@ -61,7 +61,7 @@ test("renders the prompt, numbered options, descriptions, and the custom entry",
   expect(output).toContain("기본값");
   expect(output).toContain("2. English");
   expect(output).toContain("3. Type something.");
-  expect(output).toContain("↑↓ navigate • 1-9 jump • Enter select • Esc cancel");
+  expect(output).toContain("↑↓ navigate • 1-9 activate • Enter select • Esc cancel");
 });
 
 test("default no value is selected by Enter even when it is not the first row", () => {
@@ -210,7 +210,7 @@ test("the custom entry opens an editor and free-text input becomes the answer", 
   const editing = lines().join("\n");
   expect(editing).toContain("Your answer:");
   expect(editing).toContain("Type something. ✎");
-  expect(editing).toContain("Enter to submit • Esc to cancel");
+  expect(editing).toContain("Enter to submit • Esc to return");
 
   type(component, "Klingon");
   component.handleInput(ENTER);
@@ -672,7 +672,7 @@ test("the configured cancel key closes the free-text editor", () => {
 
   component.handleInput("3");
   expect(lines().join("\n")).toContain("Your answer:");
-  expect(lines().join("\n")).toContain("Ctrl+X to cancel");
+  expect(lines().join("\n")).toContain("Ctrl+X to return");
 
   component.handleInput(CANCEL);
   expect(lines().join("\n")).not.toContain("Your answer:");
@@ -825,13 +825,13 @@ test("Tab and arrow navigation wrap across question and review tabs", () => {
   expect(lines().join("\n")).toContain("Pick a language");
 
   component.handleInput(RIGHT);
-  expect(lines().join("\n")).toContain("Ready to submit");
+  expect(lines().join("\n")).toContain("Needs answers");
 
   component.handleInput(RIGHT);
   expect(lines().join("\n")).not.toContain("Ready to submit");
 
   component.handleInput(LEFT);
-  expect(lines().join("\n")).toContain("Ready to submit");
+  expect(lines().join("\n")).toContain("Needs answers");
 });
 
 test("answered tabs are marked in the tab bar", () => {
@@ -1242,4 +1242,96 @@ test("input after settlement does not produce another result", () => {
   component.handleInput(ESCAPE);
   component.handleInput(ENTER);
   expect(settled).toHaveLength(1);
+});
+
+test("questionnaire identity and state text distinguish question, filtering, editor and incomplete review", () => {
+  const { component, lines, settled } = mount([question({ requireReview: true, multiSelect: true })]);
+  expect(lines(100).join("\n")).toContain("Questionnaire • Select multiple • 1/1");
+  component.handleInput("/");
+  expect(lines(100).join("\n")).toContain("Questionnaire • Filtering");
+  expect(lines(100).join("\n")).toContain("Space toggle • Enter confirm");
+  component.handleInput(ESCAPE);
+  component.handleInput("3");
+  expect(lines(100).join("\n")).toContain("Questionnaire • Custom input");
+  expect(lines(100).join("\n")).toContain("Esc to return");
+  component.handleInput(ESCAPE);
+  component.handleInput(TAB);
+  const review = lines(100).join("\n");
+  expect(review).toContain("Questionnaire • Review");
+  expect(review).toContain("Needs answers");
+  expect(review).not.toContain("Ready to submit");
+  expect(review).not.toContain("1-9");
+  expect(review).not.toContain("Space toggle");
+  expect(settled).toHaveLength(0);
+});
+
+test("wide disclosure and YES labels remain complete, width-safe and guarded through required review", () => {
+  const disclosure = `Authorization disclosure 권한 안내 👩‍💻 ${"명령어와 대상경로를 확인하세요 ".repeat(12)}`;
+  const yesLabel = `YES — 승인 👩‍💻 ${"긴선택레이블".repeat(10)}`;
+  let allow = false;
+  const attempts: QuestionnaireResult[] = [];
+  const { component, lines, settled } = mount(
+    [
+      question({
+        prompt: disclosure,
+        options: [
+          { value: "yes", label: yesLabel },
+          { value: "no", label: "NO" },
+        ],
+        allowOther: false,
+        defaultValues: ["no"],
+        requireReview: true,
+      }),
+    ],
+    {
+      canSubmit: (result) => {
+        attempts.push(result);
+        return allow;
+      },
+    },
+  );
+  const compact = (value: string) => value.replace(/\s/g, "");
+  for (const width of [2, 3, 12, 24, 80]) {
+    const rendered = lines(width);
+    for (const line of rendered) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    if (width >= 12) {
+      const content = compact(rendered.join("\n"));
+      expect(content).toContain(compact(disclosure));
+      expect(content).toContain(compact(yesLabel));
+    }
+  }
+  // Choosing YES only enters review. The original guard still owns settlement.
+  component.handleInput("1");
+  expect(settled).toHaveLength(0);
+  expect(attempts).toHaveLength(0);
+  for (const width of [12, 24, 80]) {
+    const rendered = lines(width);
+    for (const line of rendered) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    expect(compact(rendered.join("\n"))).toContain(compact(yesLabel));
+  }
+  component.handleInput(ENTER);
+  expect(settled).toHaveLength(0);
+  expect(attempts[0]!.answers[0]).toMatchObject({ value: "yes" });
+  expect(lines(100).join("\n")).toContain("Ready to submit");
+  allow = true;
+  component.handleInput(ENTER);
+  expect(settled).toHaveLength(1);
+});
+
+test("ANSI themed custom input and review stay width-safe with Hangul and emoji", () => {
+  const theme = {
+    fg: (_: string, text: string) => `\u001b[36m${text}\u001b[0m`,
+    bg: (_: string, text: string) => `\u001b[44m${text}\u001b[0m`,
+    bold: (text: string) => `\u001b[1m${text}\u001b[0m`,
+  };
+  const { component, lines } = mount([question({ requireReview: true, label: "한국어 👩‍💻 질문" })], { theme });
+  component.handleInput("3");
+  type(component, "한국어 👩‍💻 답변");
+  for (const width of [1, 2, 3, 12, 40]) {
+    for (const line of lines(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
+  component.handleInput(ENTER);
+  for (const width of [1, 2, 3, 12, 40]) {
+    for (const line of lines(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
 });

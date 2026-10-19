@@ -177,6 +177,8 @@ export interface HelpTextOptions {
   canFilter?: boolean;
   /** A filter is being typed, so most keys go to the filter. */
   filterActive?: boolean;
+  /** Review has no option-list actions. */
+  review?: boolean;
   keys?: Partial<HelpKeyLabels>;
 }
 
@@ -185,22 +187,24 @@ export function helpText(options: HelpTextOptions): string {
   const keys = { ...DEFAULT_HELP_KEYS, ...options.keys };
   // Normal arrow glyphs read as a compact pair. An unavailable action needs a
   // separator so "Unbound" is a truthful hint rather than a merged key name.
-  const navigationKeys =
-    keys.up === "Unbound" || keys.down === "Unbound" ? `${keys.up}/${keys.down}` : `${keys.up}${keys.down}`;
+  const navigationKeys = keys.up === "↑" && keys.down === "↓" ? "↑↓" : `${keys.up}/${keys.down}`;
+  const cancelKeys = keys.cancel === "Esc" || keys.cancel === "Unbound" ? "Esc" : `Esc/${keys.cancel}`;
+  if (options.review) return `Tab/←→ navigate • ${cancelKeys} cancel`;
   if (options.filterActive) {
-    return `Type to filter • ${navigationKeys} select • ${keys.confirm} choose • ${keys.cancel} clear filter`;
+    const action = options.multiSelect ? `Space toggle • ${keys.confirm} confirm` : `${keys.confirm} select`;
+    return `Type to filter • ${navigationKeys} navigate • ${action} • ${keys.cancel} clear filter`;
   }
 
   const segments: string[] = [];
   segments.push(
-    options.hasMultipleQuestions ? `Tab/←→ navigate • ${navigationKeys} select` : `${navigationKeys} navigate`,
+    options.hasMultipleQuestions ? `Tab/←→ navigate • ${navigationKeys} move` : `${navigationKeys} navigate`,
   );
-  segments.push("1-9 jump");
+  segments.push("1-9 activate");
   segments.push(
     options.multiSelect ? `Space toggle • a all • c clear • ${keys.confirm} confirm` : `${keys.confirm} select`,
   );
   if (options.canFilter) segments.push("/ filter");
-  segments.push(`${keys.cancel} cancel`);
+  segments.push(`${cancelKeys} cancel`);
   return segments.join(" • ");
 }
 

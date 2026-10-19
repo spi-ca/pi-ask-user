@@ -197,17 +197,17 @@ test("a skipped question counts as answered for the missing list", () => {
 
 test("helpText adapts to multi-question, multi-select, and filter modes", () => {
   expect(helpText({ hasMultipleQuestions: false, multiSelect: false })).toBe(
-    "↑↓ navigate • 1-9 jump • Enter select • Esc cancel",
+    "↑↓ navigate • 1-9 activate • Enter select • Esc cancel",
   );
   expect(helpText({ hasMultipleQuestions: false, multiSelect: true })).toBe(
-    "↑↓ navigate • 1-9 jump • Space toggle • a all • c clear • Enter confirm • Esc cancel",
+    "↑↓ navigate • 1-9 activate • Space toggle • a all • c clear • Enter confirm • Esc cancel",
   );
   expect(helpText({ hasMultipleQuestions: true, multiSelect: false })).toBe(
-    "Tab/←→ navigate • ↑↓ select • 1-9 jump • Enter select • Esc cancel",
+    "Tab/←→ navigate • ↑↓ move • 1-9 activate • Enter select • Esc cancel",
   );
   expect(helpText({ hasMultipleQuestions: false, multiSelect: false, canFilter: true })).toContain("/ filter");
   expect(helpText({ hasMultipleQuestions: false, multiSelect: false, filterActive: true })).toBe(
-    "Type to filter • ↑↓ select • Enter choose • Esc clear filter",
+    "Type to filter • ↑↓ navigate • Enter select • Esc clear filter",
   );
 });
 
@@ -217,7 +217,7 @@ test("helpText uses the key labels it is given", () => {
     multiSelect: false,
     keys: { confirm: "Ctrl+M", cancel: "Ctrl+C" },
   });
-  expect(text).toBe("↑↓ navigate • 1-9 jump • Ctrl+M select • Ctrl+C cancel");
+  expect(text).toBe("↑↓ navigate • 1-9 activate • Ctrl+M select • Esc/Ctrl+C cancel");
 });
 
 test("optionRowText numbers options from 1 and marks the editing custom entry", () => {
@@ -225,4 +225,20 @@ test("optionRowText numbers options from 1 and marks the editing custom entry", 
   expect(optionRowText({ value: "ko", label: "Korean" }, 1, "☑ ", false)).toBe("☑ 2. Korean");
   expect(optionRowText({ value: OTHER_OPTION_VALUE, label: "Other", isOther: true }, 2, "", true)).toBe("3. Other ✎");
   expect(optionRowText({ value: OTHER_OPTION_VALUE, label: "Other", isOther: true }, 2, "", false)).toBe("3. Other");
+});
+
+test("review help omits option actions and filter help retains multi-select toggle", () => {
+  const review = helpText({ hasMultipleQuestions: true, multiSelect: false, review: true });
+  expect(review).toBe("Tab/←→ navigate • Esc cancel");
+  for (const action of ["1-9", "select", "filter"]) expect(review).not.toContain(action);
+  const filtering = helpText({ hasMultipleQuestions: true, multiSelect: true, filterActive: true });
+  expect(filtering).toContain("Space toggle • Enter confirm");
+  expect(filtering).not.toContain("a all");
+  expect(filtering).not.toContain("1-9");
+});
+
+test("non-arrow navigation keys have an unambiguous separator", () => {
+  expect(
+    helpText({ hasMultipleQuestions: false, multiSelect: false, keys: { up: "Ctrl+P", down: "Ctrl+N" } }),
+  ).toContain("Ctrl+P/Ctrl+N navigate");
 });

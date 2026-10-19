@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type Component, visibleWidth } from "@earendil-works/pi-tui";
 import { EVENT_NAMES } from "@pi/presence";
 import { Check } from "typebox/value";
 import askUser from "../index.ts";
@@ -611,7 +612,7 @@ test("renderResult marks answers, free text, skips, and cancellation", () => {
     fakeTheme(),
     {},
   ) as { text: string };
-  expect(answered.text).toBe("✓ Language: (wrote) Klingon");
+  expect(answered.text).toBe("ask_user • Completed\n✓ Language: (wrote) Klingon");
 
   const skipped = tool.renderResult(
     {
@@ -626,7 +627,7 @@ test("renderResult marks answers, free text, skips, and cancellation", () => {
     fakeTheme(),
     {},
   ) as { text: string };
-  expect(skipped.text).toBe("– Language: (skipped)");
+  expect(skipped.text).toBe("ask_user • Completed\n– Language: (skipped)");
 
   const cancelled = tool.renderResult(
     {
@@ -637,7 +638,7 @@ test("renderResult marks answers, free text, skips, and cancellation", () => {
     fakeTheme(),
     {},
   ) as { text: string };
-  expect(cancelled.text).toBe("Cancelled");
+  expect(cancelled.text).toBe("ask_user • Cancelled");
 
   const aborted = tool.renderResult(
     {
@@ -648,7 +649,7 @@ test("renderResult marks answers, free text, skips, and cancellation", () => {
     fakeTheme(),
     {},
   ) as { text: string };
-  expect(aborted.text).toBe("Cancelled (aborted)");
+  expect(aborted.text).toBe("ask_user • Aborted");
 });
 
 test("renderResult falls back to the plain content text without details", () => {
@@ -659,7 +660,7 @@ test("renderResult falls back to the plain content text without details", () => 
     fakeTheme(),
     {},
   ) as { text: string };
-  expect(result.text).toBe(NON_INTERACTIVE_MESSAGE);
+  expect(result.text).toBe(`ask_user • Result\n${NON_INTERACTIVE_MESSAGE}`);
 });
 
 test("structured output covers multi, custom-only multi, custom, and skipped UI answers", async () => {
@@ -752,4 +753,61 @@ test("aborted structured output also preserves already recorded partial answers"
   });
   expect(result.content[0]!.text).toContain("the tool call was aborted");
   expect(result.content[0]!.text).toContain('Language: English ["en"]');
+});
+
+test("result presentation separates failure diagnostics and preserves cancelled partial answers", () => {
+  const { tool } = register();
+  for (const [reason, state] of [
+    ["invalid", "Invalid request"],
+    ["unavailable", "Unavailable"],
+  ] as const) {
+    const rendered = tool.renderResult(
+      {
+        content: [{ type: "text", text: "Error: diagnostic detail\u202e\u009b" }],
+        details: { questions: [], answers: [], cancelled: true, cancelReason: reason } satisfies QuestionnaireResult,
+      },
+      {},
+      fakeTheme(),
+      {},
+    ) as { text: string };
+    expect(rendered.text).toBe(`ask_user • ${state}\nError: diagnostic detail`);
+  }
+  const details: QuestionnaireResult = {
+    questions: [makeQuestion()],
+    answers: [{ id: "lang", kind: "custom", value: "한국어 👩‍💻 답변", label: "한국어 👩‍💻 답변" }],
+    cancelled: true,
+    cancelReason: "aborted",
+  };
+  const snapshot = JSON.stringify(details);
+  for (const expanded of [false, true]) {
+    const rendered = tool.renderResult({ content: [], details }, { expanded }, fakeTheme(), {}) as Component & {
+      text: string;
+    };
+    expect(rendered.text).toContain("ask_user • Aborted\nAnswered so far (not submitted):");
+    expect(rendered.text).toContain("Language: (wrote) 한국어 👩‍💻 답변");
+    for (const width of [2, 3, 12, 40]) {
+      for (const line of rendered.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+  }
+  expect(JSON.stringify(details)).toBe(snapshot);
+});
+
+test("partial and host-error renderers use truthful state text without inventing expansion hints", () => {
+  const { tool } = register();
+  const pending = tool.renderResult({ content: [] }, { isPartial: true }, fakeTheme(), {}) as { text: string };
+  expect(pending.text).toBe("ask_user • Pending");
+  const error = tool.renderResult({ content: [{ type: "text", text: "Host validation failed" }] }, {}, fakeTheme(), {
+    isError: true,
+  }) as { text: string };
+  expect(error.text).toBe("ask_user • Error\nHost validation failed");
+  expect(error.text).not.toContain("expand");
+  const call = tool.renderCall(
+    { questions: [{ label: "한국어 👩‍💻 질문".repeat(6) }] },
+    fakeTheme(),
+    {},
+  ) as Component & { text: string };
+  expect(call.text).toContain("ask_user • Request • 1 question");
+  for (const width of [2, 3, 12, 40]) {
+    for (const line of call.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
 });

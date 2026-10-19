@@ -594,19 +594,22 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
     if (state.customErrorFor(question.id)) {
       lines.push(...wrapLinesWithPrefix(" ", theme.fg("warning", "Enter a response before continuing"), width));
     }
-    lines.push(
-      ...wrapLinesWithPrefix(
-        " ",
-        // The editor submits on Pi's input binding, not on the select-list
-        // confirm binding, so the hint has to name that key.
-        theme.fg("dim", `${keys.label("submit")} to submit • ${keys.label("cancel")} to cancel`),
-        width,
-      ),
-    );
+    // The editor submits on Pi's input binding, not select-list confirm.
+    let editingHelp = `${keys.label("submit")} to submit • Esc to return`;
+    const cancelKey = keys.label("cancel");
+    if (cancelKey !== "Esc" && cancelKey !== "Unbound") editingHelp += ` • ${cancelKey} to return`;
+    lines.push(...wrapLinesWithPrefix(" ", theme.fg("dim", editingHelp), width));
   }
 
   function renderReview(lines: string[], width: number): void {
-    lines.push(...wrapLinesWithPrefix(" ", theme.fg("accent", theme.bold("Ready to submit")), width));
+    const reviewState = state.allAnswered() ? "Ready to submit" : "Needs answers";
+    lines.push(
+      ...wrapLinesWithPrefix(
+        " ",
+        theme.fg(state.allAnswered() ? "success" : "warning", theme.bold(reviewState)),
+        width,
+      ),
+    );
     lines.push("");
     for (const question of questions) {
       const answer = state.answerFor(question.id);
@@ -679,6 +682,20 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
     const question = state.currentQuestion();
 
     lines.push(theme.fg("accent", "─".repeat(renderWidth)));
+    let viewState = "Review";
+    if (question) {
+      viewState = question.multiSelect ? "Select multiple" : "Select one";
+      if (state.isEditing) viewState = "Custom input";
+      else if (state.isFiltering) viewState = "Filtering";
+    }
+    const progress = question ? ` • ${state.currentTab + 1}/${questions.length}` : "";
+    lines.push(
+      ...wrapLinesWithPrefix(
+        " ",
+        `${theme.fg("toolTitle", theme.bold("Questionnaire"))} • ${theme.fg("accent", viewState)}${theme.fg("muted", progress)}`,
+        renderWidth,
+      ),
+    );
     if (state.totalTabs > 1) renderTabs(lines, renderWidth, hitRegions);
 
     if (state.isEditing && question) {
@@ -709,6 +726,7 @@ export function createQuestionnaireComponent(options: CreateQuestionnaireCompone
         multiSelect: question?.multiSelect === true,
         canFilter: (question?.options.length ?? 0) >= FILTER_HINT_THRESHOLD,
         filterActive: state.isFiltering,
+        review: state.onReviewTab,
         keys: {
           up: keys.label("up"),
           down: keys.label("down"),
