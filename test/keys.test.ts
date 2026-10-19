@@ -100,7 +100,7 @@ test("a rejection with keys still bound is authoritative", () => {
 test("a manager without getKeys is trusted rather than second-guessed", () => {
   const resolver = createKeyResolver({ matches: () => false });
   expect(resolver.matches(ENTER, "confirm")).toBe(false);
-  expect(resolver.label("confirm")).toBe("Enter");
+  expect(resolver.label("confirm")).toBe("Configured key");
 });
 
 test("malformed key ids are dropped from labels", () => {
@@ -169,9 +169,17 @@ test("an empty key list falls back to the default label", () => {
   expect(resolver.label("cancel")).toBe("Esc");
 });
 
-test("a manager without getKeys still produces default labels", () => {
+test("a manager without getKeys reports unknown labels for each action", () => {
   const resolver = createKeyResolver({ matches: () => false });
-  expect(resolver.label("confirm")).toBe("Enter");
-  expect(resolver.label("up")).toBe("↑");
-  expect(resolver.label("submit")).toBe("Enter");
+  expect(resolver.label("confirm")).toBe("Configured key");
+  expect(resolver.label("up")).toBe("Configured key");
+  expect(resolver.label("submit")).toBe("Configured key");
+});
+
+test("matcher-only managers never advertise guessed default bindings", () => {
+  const resolver = createKeyResolver({ matches: (data: string) => data === "custom" });
+  expect(resolver.label("confirm")).toBe("Configured key");
+  expect(resolver.label("up")).toBe("Configured key");
+  expect(resolver.matches("\r", "confirm")).toBe(false);
+  expect(resolver.matches("custom", "confirm")).toBe(true);
 });

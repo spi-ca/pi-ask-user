@@ -107,7 +107,7 @@ pi install /absolute/path/to/pi-ask-user
 
 ## 키 조작
 
-위·아래 이동·확인·취소는 Pi의 `tui.select.up`/`down`/`confirm`/`cancel` 키 바인딩을 따르며 도움말에도 해석된 실제 설정값을 표시합니다. `matches()`만 있고 `getKeys()`가 없는 관리자는 `matches()`의 거부도 권위 있으므로 기본 키로 대체하지 않습니다. `getKeys()`가 명시적으로 빈 목록을 주거나 `getKeys()`/`matches()` 호출이 실패할 때만 기본 키를 검토합니다. 이때도 다른 설정된 선택 동작이 그 입력을 소유하면 대체 키는 비활성화되며 도움말에는 `Unbound`로 표시합니다. 예를 들어 `confirm=[]`, `cancel=[Enter]`이면 Enter는 취소만 하고 확인의 Enter 대체는 생기지 않습니다. 이는 모달 프롬프트의 완전한 미바인딩은 복구하되 사용자 설정 동작을 덮어쓰지 않기 위함입니다.
+위·아래 이동·확인·취소는 Pi의 `tui.select.up`/`down`/`confirm`/`cancel` 키 바인딩을 따르며 도움말에도 해석된 실제 설정값을 표시합니다. `matches()`만 있고 `getKeys()`가 없는 관리자는 `matches()`의 거부도 권위 있으므로 기본 키로 대체하지 않으며, 도움말은 실제 키를 추측하지 않고 `Configured key`로 표시합니다. `getKeys()`가 명시적으로 빈 목록을 주거나 `getKeys()`/`matches()` 호출이 실패할 때만 기본 키를 검토합니다. 이때도 다른 설정된 선택 동작이 그 입력을 소유하면 대체 키는 비활성화되며 도움말에는 `Unbound`로 표시합니다. 예를 들어 `confirm=[]`, `cancel=[Enter]`이면 Enter는 취소만 하고 확인의 Enter 대체는 생기지 않습니다. 이는 모달 프롬프트의 완전한 미바인딩은 복구하되 사용자 설정 동작을 덮어쓰지 않기 위함입니다.
 
 | 키 | 동작 |
 | --- | --- |

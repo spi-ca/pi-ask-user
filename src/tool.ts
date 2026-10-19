@@ -4,7 +4,7 @@
 // Presence is optional bookkeeping around the call and never gates it. The tool
 // runs in `sequential` mode so two questionnaires cannot fight over the TUI.
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { createQuestionnaireComponent, type QuestionnaireComponent } from "./component.ts";
 import { AskUserPresence } from "./presence.ts";
@@ -345,32 +345,62 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
 
     renderCall(args, theme, _context) {
       const { count, labels } = callLabels(args);
-      let text = theme.fg("toolTitle", theme.bold(`${TOOL_NAME} `));
-      text += theme.fg("muted", `${count} question${count !== 1 ? "s" : ""}`);
-      if (labels) text += theme.fg("dim", ` (${labels})`);
+      let text = theme.fg("toolTitle", theme.bold(TOOL_NAME));
+      text += theme.fg("accent", " • Request");
+      text += theme.fg("muted", ` • ${count} question${count !== 1 ? "s" : ""}`);
+      if (labels) text += theme.fg("text", ` (${labels})`);
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, _options, theme, _context) {
+    renderResult(result, options, theme, context) {
       const details = result.details as QuestionnaireResult | undefined;
+      const partial = options.isPartial || context.isPartial;
+      let state = "Completed";
+      let color: ThemeColor = "success";
+      if (partial) {
+        state = "Pending";
+        color = "accent";
+      } else if (!details) {
+        state = context.isError ? "Error" : "Result";
+        color = context.isError ? "error" : "muted";
+      } else if (details.cancelled) {
+        const reason = details.cancelReason ?? "user";
+        state = "Cancelled";
+        color = "warning";
+        if (reason === "invalid") {
+          state = "Invalid request";
+          color = "error";
+        } else if (reason === "unavailable") {
+          state = "Unavailable";
+        } else if (reason === "aborted") {
+          state = "Aborted";
+        }
+      }
+      const header = `${theme.fg("toolTitle", theme.bold(TOOL_NAME))} • ${theme.fg(color, state)}`;
       if (!details) {
         // Without details the text never passed through normalization; it can be
         // a host-side schema error carrying the original arguments.
         const text = result.content[0];
         const raw = text?.type === "text" ? text.text : "";
-        return new Text(sanitizeDisplayText(raw, MAX_FALLBACK_TEXT_LENGTH, true), 0, 0);
+        const diagnostic = sanitizeDisplayText(raw, MAX_FALLBACK_TEXT_LENGTH, true);
+        return new Text(diagnostic ? `${header}\n${theme.fg("muted", diagnostic)}` : header, 0, 0);
       }
-      if (details.cancelled) {
-        const reason = details.cancelReason ?? "user";
-        const suffix = reason === "user" ? "" : ` (${reason})`;
-        return new Text(theme.fg("warning", `Cancelled${suffix}`), 0, 0);
+      const lines = [header];
+      if (details.cancelled && (details.cancelReason === "invalid" || details.cancelReason === "unavailable")) {
+        const text = result.content[0];
+        if (text?.type === "text") {
+          lines.push(theme.fg("muted", sanitizeDisplayText(text.text, MAX_FALLBACK_TEXT_LENGTH, true)));
+        }
       }
-      const lines = details.answers.map((answer) => {
+      if (details.cancelled && details.answers.length > 0) {
+        lines.push(theme.fg("warning", "Answered so far (not submitted):"));
+      }
+      for (const answer of details.answers) {
         const question = details.questions.find((item) => item.id === answer.id);
         const body = `${answerPrefix(answer)}${answerLabels(answer)}`;
         const marker = answer.kind === "skipped" ? theme.fg("dim", "– ") : theme.fg("success", "✓ ");
-        return `${marker}${theme.fg("accent", question?.label || answer.id)}: ${theme.fg("text", body)}`;
-      });
+        lines.push(`${marker}${theme.fg("accent", question?.label || answer.id)}: ${theme.fg("text", body)}`);
+      }
       return new Text(lines.join("\n"), 0, 0);
     },
   });
