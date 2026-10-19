@@ -12,7 +12,8 @@ as `pi-cmux-presence`.
 
 ## Runtime
 
-Use `bun` (see `packageManager` in `package.json`), not `npm`/`npx`.
+Use Bun >=1.4.2 (see `engines.bun` in `package.json`), not `npm`/`npx`.
+CI uses the latest stable Bun release and verifies this minimum.
 
 ```bash
 bun install --frozen-lockfile
