@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 미출시
+
+- 지원 호스트·개발 의존성·override·lockfile·현재 CI의 전체 일곱 Pi package graph를 exact Pi `1.4.0`으로 갱신합니다. optional peer·Git 의존성·도구의 `sequential`·`model-only`·공개 UI·답변·presence 계약은 유지합니다.
+- Pi 1.4.0 호스트의 inline custom 대화상자 스택을 실제 메서드와 fake TUI로 검증합니다. 확인창 취소 뒤 부분 답변 설문 복원, 가려진 설문 abort 시 위 대화상자 유지, mount 전 abort를 확인하며 별도 앱 측 큐는 추가하지 않습니다.
+
 ## v20261016-1
 
 - 지원 호스트·개발 의존성·override·lockfile·현재 CI graph를 exact Pi `1.3.0`으로 갱신합니다. optional peer·Git 의존성·공개 UI·답변·presence 계약은 유지합니다.

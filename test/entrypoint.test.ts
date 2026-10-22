@@ -1,6 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  InteractiveMode,
+  initTheme,
+  VERSION,
+} from "@earendil-works/pi-coding-agent";
+import { type Component, Container, visibleWidth } from "@earendil-works/pi-tui";
 import { EVENT_NAMES } from "@pi/presence";
 import { Check } from "typebox/value";
 import askUser from "../index.ts";
@@ -129,6 +135,40 @@ function tuiContext(script: string[], sessionId = "s1", deferFactory = false): E
       },
     },
   } as unknown as ExtensionContext;
+}
+
+/** Exercise installed host dialog methods, without constructing a session or starting a terminal. */
+function dialogHost() {
+  initTheme("dark", false); // Bundled theme only; no watcher or terminal queries.
+  const editor = {
+    render: () => [],
+    invalidate() {},
+    getText: () => "unsent draft",
+    setText(text: string) {
+      expect(text).toBe("unsent draft");
+    },
+  };
+  const container = new Container();
+  let focused: Component = editor;
+  const host = Object.assign(Object.create(InteractiveMode.prototype), {
+    editor,
+    editorContainer: container,
+    extensionDialogs: [],
+    ui: {
+      ...fakeTui(),
+      setFocus(component: Component) {
+        focused = component;
+      },
+    },
+    keybindings: {},
+    programStatus: { setBlocked() {} },
+  }) as { createExtensionUIContext(): ExtensionContext["ui"] };
+  const ctx = {
+    mode: "tui",
+    sessionManager: { getSessionId: () => "dialog-host" },
+    ui: host.createExtensionUIContext(),
+  } as unknown as ExtensionContext;
+  return { ctx, editor, container, focus: () => focused };
 }
 
 function trackedAbortSignal(): { signal: AbortSignal; listenerCount: () => number } {
@@ -413,6 +453,86 @@ test("an abort while the questionnaire is open cancels it", async () => {
   expect(result.content[0]!.text).toContain(CANCELLED_MESSAGE);
   expect((result.details as QuestionnaireResult).cancelReason).toBe("aborted");
   assertStructuredResult(tool, result);
+});
+
+// The legacy lane checks this extension's old TUI imports, not the 1.4 host stacking fix.
+const dialogTest = test.skipIf(!Bun.semver.satisfies(VERSION, ">=1.4.0"));
+
+dialogTest("host restores a partially answered questionnaire after cancelling a covering confirm", async () => {
+  const { tool } = register();
+  const { ctx, editor, container, focus } = dialogHost();
+  const pending = tool.execute(
+    "covered",
+    { questions: [{ ...SINGLE_QUESTION.questions[0], requireReview: true }] },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await Promise.resolve(); // Inline custom components mount after the factory resolves.
+  const questionnaire = focus();
+  questionnaire.handleInput!("2");
+  let settled = false;
+  void pending.then(() => {
+    settled = true;
+  });
+
+  const confirm = ctx.ui.confirm("Other extension", "Continue?");
+  expect(focus()).not.toBe(questionnaire);
+  expect(container.children).toEqual([focus()]);
+  focus().handleInput!("\u001b");
+  expect(await confirm).toBe(false);
+  expect(settled).toBe(false);
+  expect(focus()).toBe(questionnaire);
+  expect(container.children).toEqual([questionnaire]);
+
+  questionnaire.handleInput!("\r");
+  const result = await pending;
+  expect(result.structuredContent).toEqual({
+    answers: [{ id: "lang", kind: "single", value: "en", label: "English", index: 2 }],
+    cancelled: false,
+  });
+  assertStructuredResult(tool, result);
+  expect(focus()).toBe(editor);
+  expect(container.children).toEqual([editor]);
+});
+
+dialogTest("aborting a hidden questionnaire leaves the covering host dialog answerable", async () => {
+  const { tool } = register();
+  const { ctx, editor, container, focus } = dialogHost();
+  const controller = new AbortController();
+  const pending = tool.execute("hidden", SINGLE_QUESTION, controller.signal, undefined, ctx);
+  await Promise.resolve();
+  const questionnaire = focus();
+  const confirm = ctx.ui.confirm("Other extension", "Continue?");
+  const covering = focus();
+  expect(covering).not.toBe(questionnaire);
+
+  controller.abort();
+  const result = await pending;
+  expect(result.structuredContent).toEqual({ answers: [], cancelled: true, cancelReason: "aborted" });
+  assertStructuredResult(tool, result);
+  expect(focus()).toBe(covering);
+  expect(container.children).toEqual([covering]);
+  covering.handleInput!("\r");
+  expect(await confirm).toBe(true);
+  expect(focus()).toBe(editor);
+  expect(container.children).toEqual([editor]);
+});
+
+dialogTest("abort before inline mounting does not displace an existing host dialog", async () => {
+  const { tool } = register();
+  const { ctx, editor, container, focus } = dialogHost();
+  const confirm = ctx.ui.confirm("Other extension", "Continue?");
+  const covering = focus();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await tool.execute("pre-mount", SINGLE_QUESTION, controller.signal, undefined, ctx);
+  expect(result.structuredContent.cancelReason).toBe("aborted");
+  expect(focus()).toBe(covering);
+  expect(container.children).toEqual([covering]);
+  covering.handleInput!("\u001b");
+  expect(await confirm).toBe(false);
+  expect(focus()).toBe(editor);
 });
 
 test("abort listeners are removed after settled success and rejected UI paths", async () => {
