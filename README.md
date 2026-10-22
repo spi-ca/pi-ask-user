@@ -4,7 +4,7 @@ Pi TUI에서 사용자에게 선택형 질문을 하고 구조화된 답변을 �
 
 저장소: <https://github.com/spi-ca/pi-ask-user>
 
-지원 호스트는 **Pi 1.3.0**입니다. `ask_user`는 `exposure: "model-only"`로 모델에 직접 노출되며 codemode·다른 도구의 중첩 호출 대상이 아닙니다. optional peer의 `*`는 이전 Pi 지원 보증이 아닙니다.
+지원 호스트는 **Pi 1.4.0**입니다. `ask_user`는 `exposure: "model-only"`로 모델에 직접 노출되며 codemode·다른 도구의 중첩 호출 대상이 아닙니다. optional peer의 `*`는 이전 Pi 지원 보증이 아닙니다.
 
 ## 핵심 기능
 
