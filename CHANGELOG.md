@@ -1,5 +1,10 @@
 # 변경 이력
 
+## [2026.1104.2]
+
+- 패키지 버전은 날짜와 당일 릴리스 순서를 나타내는 하이픈 없는 `YYYY.MMDD.N` 형식의 SemVer를 사용합니다. `2026.1104.2`는 사전 릴리스가 아닌 정식 버전이며 대응하는 릴리스 태그는 `v20261104-2`입니다.
+- 기존 `0.1.1` 변경 이력과 이전 태그는 보존합니다. 호스트 의존성·런타임 동작·immutable Git pin은 변경하지 않습니다.
+
 ## [0.1.1]
 
 - 지원 호스트·개발 의존성·override·lockfile·현재 CI의 전체 여덟 Pi package graph를 새 `pi-schema`를 포함한 exact Pi `1.5.0`으로 갱신합니다. optional peer·shared presence Git pin·legacy 회귀 lane은 유지합니다.
