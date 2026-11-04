@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import {
   type ExtensionAPI,
   type ExtensionContext,
@@ -10,6 +11,7 @@ import { type Component, Container, visibleWidth } from "@earendil-works/pi-tui"
 import { EVENT_NAMES } from "@pi/presence";
 import { Check } from "typebox/value";
 import askUser from "../index.ts";
+import type { QuestionnaireParams } from "../src/questions.ts";
 import { QuestionnaireOutput, type StructuredQuestionnaireResult } from "../src/result.ts";
 import { CANCELLED_MESSAGE, NON_INTERACTIVE_MESSAGE, TOOL_DESCRIPTION, TOOL_LABEL, TOOL_NAME } from "../src/tool.ts";
 import type { QuestionnaireResult } from "../src/types.ts";
@@ -26,7 +28,7 @@ type RegisteredTool = {
   name: string;
   label: string;
   description: string;
-  parameters: unknown;
+  parameters: typeof QuestionnaireParams;
   executionMode: string;
   exposure: string;
   outputSchema: typeof QuestionnaireOutput;
@@ -150,6 +152,7 @@ function dialogHost() {
   };
   const container = new Container();
   let focused: Component = editor;
+  const blockedCalls: { source: string; blocked: { kind: string; message?: string } | undefined }[] = [];
   const host = Object.assign(Object.create(InteractiveMode.prototype), {
     editor,
     editorContainer: container,
@@ -161,14 +164,18 @@ function dialogHost() {
       },
     },
     keybindings: {},
-    programStatus: { setBlocked() {} },
+    programStatus: {
+      setBlocked(source: string, blocked: { kind: string; message?: string } | undefined) {
+        blockedCalls.push({ source, blocked });
+      },
+    },
   }) as { createExtensionUIContext(): ExtensionContext["ui"] };
   const ctx = {
     mode: "tui",
     sessionManager: { getSessionId: () => "dialog-host" },
     ui: host.createExtensionUIContext(),
   } as unknown as ExtensionContext;
-  return { ctx, editor, container, focus: () => focused };
+  return { ctx, editor, container, focus: () => focused, blockedCalls };
 }
 
 function trackedAbortSignal(): { signal: AbortSignal; listenerCount: () => number } {
@@ -457,10 +464,121 @@ test("an abort while the questionnaire is open cancels it", async () => {
 
 // The legacy lane checks this extension's old TUI imports, not the 1.4 host stacking fix.
 const dialogTest = test.skipIf(!Bun.semver.satisfies(VERSION, ">=1.4.0"));
+const supportsNativeBlocked = Bun.semver.satisfies(VERSION, ">=1.5.0");
+const nativeHostTest = test.skipIf(!supportsNativeBlocked);
+const QUESTION_BLOCKED = { kind: "question", message: "Waiting for questionnaire answers" };
+
+nativeHostTest(
+  "host argument coercion reaches normalization and the UI without mutating the original call",
+  async () => {
+    const { tool } = register();
+    const args = {
+      questions: [
+        {
+          ...SINGLE_QUESTION.questions[0],
+          options: { value: "ko", label: "Korean" },
+          multiSelect: "true",
+          allowOther: "false",
+          minSelections: "1",
+          maxSelections: "1",
+          otherMaxLength: "120",
+          defaultValues: "ko",
+          label: null,
+        },
+      ],
+    };
+    const before = structuredClone(args);
+    const params = validateToolArguments(tool, { type: "toolCall", id: "coerced", name: TOOL_NAME, arguments: args });
+    const result = await tool.execute("coerced", params, undefined, undefined, tuiContext(["\r"]));
+    expect(args).toEqual(before);
+    expect((result.details as QuestionnaireResult).questions[0]).toMatchObject({
+      label: "lang",
+      multiSelect: true,
+      allowOther: false,
+      minSelections: 1,
+      maxSelections: 1,
+      otherMaxLength: 120,
+      defaultValues: ["ko"],
+    });
+    expect(result.structuredContent).toEqual({
+      answers: [{ id: "lang", kind: "multi", selections: [{ value: "ko", label: "Korean", index: 1 }] }],
+      cancelled: false,
+    });
+    assertStructuredResult(tool, result);
+  },
+);
+
+nativeHostTest(
+  "host schema validation rejects malformed fields while normalization retains semantic guards",
+  async () => {
+    const { tool } = register();
+    const question = SINGLE_QUESTION.questions[0]!;
+    for (const [input, diagnostic] of [
+      [{ id: question.id, options: question.options }, "- questions.0.prompt: missing"],
+      [{ ...question, otherMaxLength: "not-a-number" }, "- questions.0.otherMaxLength: expected integer, got string"],
+      [{ ...question, options: [] }, "- questions.0.options: expected at least 1 items"],
+    ] as const) {
+      expect(() =>
+        validateToolArguments(tool, {
+          type: "toolCall",
+          id: "invalid-host",
+          name: TOOL_NAME,
+          arguments: { questions: [input] },
+        }),
+      ).toThrow(diagnostic);
+    }
+
+    const params = validateToolArguments(tool, {
+      type: "toolCall",
+      id: "semantic",
+      name: TOOL_NAME,
+      arguments: { questions: [{ ...SINGLE_QUESTION.questions[0], defaultValues: "unknown" }] },
+    });
+    let opened = false;
+    const ctx = {
+      mode: "tui",
+      ui: {
+        custom() {
+          opened = true;
+          throw new Error("semantic rejection must precede UI");
+        },
+      },
+    } as unknown as ExtensionContext;
+    const result = await tool.execute("semantic", params, undefined, undefined, ctx);
+    expect(opened).toBe(false);
+    expect(result.structuredContent.cancelReason).toBe("invalid");
+    expect(result.content[0]!.text).toContain("defaultValues");
+    assertStructuredResult(tool, result);
+  },
+);
+
+nativeHostTest(
+  "visible questionnaire reports only static native blocked metadata and clears it on user cancel",
+  async () => {
+    const registration = register();
+    const { ctx, editor, focus, blockedCalls } = dialogHost();
+    const consumer = attachToolPresence(registration, ctx);
+    const pending = registration.tool.execute("native-private", SENTINEL_QUESTION, undefined, undefined, ctx);
+    expect(blockedCalls).toEqual([]); // Merely creating the factory is not visible waiting.
+    await Promise.resolve();
+    expect(blockedCalls).toEqual([{ source: "extension-dialog", blocked: QUESTION_BLOCKED }]);
+    focus().handleInput!("\u001b");
+    const result = await pending;
+    expect(result.structuredContent.cancelReason).toBe("user");
+    expect(focus()).toBe(editor);
+    expect(blockedCalls).toEqual([
+      { source: "extension-dialog", blocked: QUESTION_BLOCKED },
+      { source: "extension-dialog", blocked: undefined },
+    ]);
+    for (const sentinel of QUESTIONNAIRE_SENTINELS) expect(JSON.stringify(blockedCalls)).not.toContain(sentinel);
+    assertStructuredResult(registration.tool, result);
+    assertPrivateToolPresence(registration, consumer);
+  },
+);
 
 dialogTest("host restores a partially answered questionnaire after cancelling a covering confirm", async () => {
   const { tool } = register();
-  const { ctx, editor, container, focus } = dialogHost();
+  const { ctx, editor, container, focus, blockedCalls } = dialogHost();
   const pending = tool.execute(
     "covered",
     { questions: [{ ...SINGLE_QUESTION.questions[0], requireReview: true }] },
@@ -494,11 +612,19 @@ dialogTest("host restores a partially answered questionnaire after cancelling a 
   assertStructuredResult(tool, result);
   expect(focus()).toBe(editor);
   expect(container.children).toEqual([editor]);
+  if (supportsNativeBlocked) {
+    expect(blockedCalls).toEqual([
+      { source: "extension-dialog", blocked: QUESTION_BLOCKED },
+      { source: "extension-dialog", blocked: { kind: "permission", message: "Other extension" } },
+      { source: "extension-dialog", blocked: QUESTION_BLOCKED },
+      { source: "extension-dialog", blocked: undefined },
+    ]);
+  }
 });
 
 dialogTest("aborting a hidden questionnaire leaves the covering host dialog answerable", async () => {
   const { tool } = register();
-  const { ctx, editor, container, focus } = dialogHost();
+  const { ctx, editor, container, focus, blockedCalls } = dialogHost();
   const controller = new AbortController();
   const pending = tool.execute("hidden", SINGLE_QUESTION, controller.signal, undefined, ctx);
   await Promise.resolve();
@@ -506,6 +632,7 @@ dialogTest("aborting a hidden questionnaire leaves the covering host dialog answ
   const confirm = ctx.ui.confirm("Other extension", "Continue?");
   const covering = focus();
   expect(covering).not.toBe(questionnaire);
+  const beforeAbort = blockedCalls.slice();
 
   controller.abort();
   const result = await pending;
@@ -513,21 +640,31 @@ dialogTest("aborting a hidden questionnaire leaves the covering host dialog answ
   assertStructuredResult(tool, result);
   expect(focus()).toBe(covering);
   expect(container.children).toEqual([covering]);
+  expect(blockedCalls).toEqual(beforeAbort); // Hidden cancellation cannot overwrite the top dialog's status.
   covering.handleInput!("\r");
   expect(await confirm).toBe(true);
   expect(focus()).toBe(editor);
   expect(container.children).toEqual([editor]);
+  if (supportsNativeBlocked) {
+    expect(blockedCalls).toEqual([
+      { source: "extension-dialog", blocked: QUESTION_BLOCKED },
+      { source: "extension-dialog", blocked: { kind: "permission", message: "Other extension" } },
+      { source: "extension-dialog", blocked: undefined },
+    ]);
+  }
 });
 
 dialogTest("abort before inline mounting does not displace an existing host dialog", async () => {
   const { tool } = register();
-  const { ctx, editor, container, focus } = dialogHost();
+  const { ctx, editor, container, focus, blockedCalls } = dialogHost();
   const confirm = ctx.ui.confirm("Other extension", "Continue?");
   const covering = focus();
+  const beforeAbort = blockedCalls.slice();
   const controller = new AbortController();
   controller.abort();
   const result = await tool.execute("pre-mount", SINGLE_QUESTION, controller.signal, undefined, ctx);
   expect(result.structuredContent.cancelReason).toBe("aborted");
+  expect(blockedCalls).toEqual(beforeAbort);
   expect(focus()).toBe(covering);
   expect(container.children).toEqual([covering]);
   covering.handleInput!("\u001b");

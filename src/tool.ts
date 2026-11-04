@@ -270,7 +270,7 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
     description: TOOL_DESCRIPTION,
     parameters: QuestionnaireParams,
     executionMode: "sequential",
-    // Keep legacy registration structurally loadable; only 1.4.0 is supported
+    // Keep legacy registration structurally loadable; only 1.5.0 is supported
     // for the host-enforced exposure and structured output contracts.
     ...{ exposure: "model-only" as const, outputSchema: QuestionnaireOutput },
 
@@ -298,23 +298,31 @@ export function registerAskUserTool(pi: ExtensionAPI): void {
       };
 
       try {
-        const questionnaire = ctx.ui.custom<QuestionnaireResult>((tui, theme, keybindings, done) => {
-          const mounted = createQuestionnaireComponent({
-            questions,
-            tui,
-            theme,
-            keybindings,
-            done: (result) => {
-              component = null;
-              done(result);
-            },
-          });
-          component = mounted;
-          // An abort that arrived before mounting settles the component now; the
-          // component itself is still returned so the host can dispose it.
-          if (cancelRequested) mounted.cancel("aborted");
-          return mounted;
-        });
+        const questionnaire = ctx.ui.custom<QuestionnaireResult>(
+          (tui, theme, keybindings, done) => {
+            const mounted = createQuestionnaireComponent({
+              questions,
+              tui,
+              theme,
+              keybindings,
+              done: (result) => {
+                component = null;
+                done(result);
+              },
+            });
+            component = mounted;
+            // An abort that arrived before mounting settles the component now; the
+            // component itself is still returned so the host can dispose it.
+            if (cancelRequested) mounted.cancel("aborted");
+            return mounted;
+          },
+          {
+            overlay: false,
+            // Host-owned visibility/stack lifecycle; never expose questionnaire content.
+            // Spread keeps the legacy regression lane structurally loadable.
+            ...{ blocked: { kind: "question" as const, message: "Waiting for questionnaire answers" } },
+          },
+        );
 
         if (signal?.aborted) cancel();
         else signal?.addEventListener("abort", cancel, { once: true });

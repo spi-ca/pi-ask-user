@@ -1,9 +1,12 @@
 # 변경 이력
 
-## 미출시
+## [0.1.1]
 
-- 지원 호스트·개발 의존성·override·lockfile·현재 CI의 전체 일곱 Pi package graph를 exact Pi `1.4.0`으로 갱신합니다. optional peer·Git 의존성·도구의 `sequential`·`model-only`·공개 UI·답변·presence 계약은 유지합니다.
-- Pi 1.4.0 호스트의 inline custom 대화상자 스택을 실제 메서드와 fake TUI로 검증합니다. 확인창 취소 뒤 부분 답변 설문 복원, 가려진 설문 abort 시 위 대화상자 유지, mount 전 abort를 확인하며 별도 앱 측 큐는 추가하지 않습니다.
+- 지원 호스트·개발 의존성·override·lockfile·현재 CI의 전체 여덟 Pi package graph를 새 `pi-schema`를 포함한 exact Pi `1.5.0`으로 갱신합니다. optional peer·shared presence Git pin·legacy 회귀 lane은 유지합니다.
+- inline `ctx.ui.custom()`에 native `blocked.kind: "question"`과 고정 메시지 `Waiting for questionnaire answers`를 전달합니다. 보이는 설문·덮임·복원·종료 상태는 호스트가 관리하고 질문·옵션·답변·취소 사유·세션 ID는 메시지에 담지 않습니다. shared presence 계약은 바뀌지 않습니다.
+- Pi 호스트의 inline custom 대화상자 스택을 실제 메서드와 fake TUI로 검증합니다. 확인창 취소 뒤 부분 답변 설문 복원, 가려진 설문 abort 시 위 대화상자 유지, mount 전 abort와 native blocked 상태를 확인하며 별도 앱 측 큐는 추가하지 않습니다.
+- 실제 Pi 1.5 호스트의 인수 변환·JSON Schema 거부와 도구 정규화 경계를 검증합니다. `sequential`·`model-only`·공개 UI·답변·취소·구조화 결과 계약은 유지합니다.
+- 패키지 버전을 `0.1.1`로 올리고 Pi의 확장 업데이트 안내에서 읽을 수 있는 버전 제목을 사용합니다. 이전 날짜 태그 이력은 그대로 보존합니다.
 
 ## v20261016-1
 
