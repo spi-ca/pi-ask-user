@@ -1,6 +1,6 @@
 {
   "name": "pi-ask-user",
-  "version": "0.1.1",
+  "version": "2026.1104.2",
   "description": "Interactive questionnaire tool for Pi. Asks single or multiple option questions in the TUI with optional custom input and process-local V2 presence.",
   "type": "module",
   "license": "MIT",
