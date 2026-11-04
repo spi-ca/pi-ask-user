@@ -59,6 +59,8 @@
 
 ## 입력 검증
 
+Pi 1.5.0은 TypeBox로 만든 파라미터를 JSON Schema로 검증하며 `pi-schema`로 일부 인수를 변환한 뒤 실행합니다. 예를 들어 숫자 문자열·불리언 문자열과 단일 옵션/기본값을 스키마의 숫자·불리언·배열로 바꿀 수 있습니다. 호출은 위 표의 타입을 그대로 사용하는 것이 권장되며, 이 패키지의 `normalizeQuestions()` 자체가 느슨한 타입을 허용하는 것은 아닙니다. 호스트 오류는 `- questions.0.prompt: missing` 같은 경로별 메시지이고, 아래 표는 실행된 도구의 정규화 오류입니다.
+
 도구가 실제로 실행된 뒤의 정규화는 UI를 열기 전에 수행하며, 실패하면 오류 문자열과 구조화된 `cancelled: true`, `cancelReason: "invalid"` 결과를 반환합니다. 예외를 던지지 않습니다. 반면 Pi 호스트가 도구 스키마를 먼저 거부한 호출은 이 도구의 실행 자체가 없으므로 `details`를 포함한다는 보장이 없습니다.
 
 | 조건 | 반환 메시지 |
@@ -114,7 +116,7 @@ Targets: macOS, Linux ["macos","linux"]
 Language: Klingon
 ```
 
-`ask_user`는 Pi 1.4.0에서 `exposure: "model-only"`로 등록됩니다. 모델이 직접 호출할 수 있지만 codemode 스크립트나 `ctx.executeTool()`의 중첩 호출 대상은 아닙니다.
+`ask_user`는 Pi 1.5.0에서 `exposure: "model-only"`로 등록됩니다. 모델이 직접 호출할 수 있지만 codemode 스크립트나 `ctx.executeTool()`의 중첩 호출 대상은 아닙니다.
 
 `outputSchema`에 대응하는 `structuredContent`는 질문 배열을 제외한 간결한 결과입니다. 기존 텍스트 `content`와 전체 `details`는 그대로 유지하며, 공개 `pi-ask-user/ui`의 `QuestionnaireResult`도 바뀌지 않습니다.
 

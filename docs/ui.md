@@ -40,6 +40,7 @@ async function ask(ctx: ExtensionContext, hostCanShowPrompt: () => boolean): Pro
         return hostCanShowPrompt();
       },
     }),
+    { blocked: { kind: "question", message: "Waiting for questionnaire answers" } },
   );
   if (result.cancelled) {
     // result.cancelReason: "user" | "aborted" | "unavailable" | "invalid" (취소 시에만 존재)
@@ -53,6 +54,8 @@ async function ask(ctx: ExtensionContext, hostCanShowPrompt: () => boolean): Pro
 
 `normalizeQuestions({ questions: [...] })`는 정규화된 `Question[]` 또는 오류 문자열을 돌려줍니다. `createQuestionnaireComponent`는 정규화된 질문을 받아 `QuestionnaireComponent`를 반환합니다. `done(result)`는 한 번만 호출됩니다. `result`는 `questions`, 질문 순서의 `answers`, `cancelled`와 취소 시 `cancelReason`을 포함합니다. 단일 선택의 `value`는 옵션의 외부 식별자이며 표시 순서인 `index`(1부터 시작)나 `label`과 다릅니다. 다중 선택은 `selections[].value`, 자유 입력은 `custom` 또는 `value`, 건너뛰기는 `kind: "skipped"`를 사용합니다. 취소해도 이미 기록된 답변은 남습니다.
 
-Pi 1.4.0은 inline `ctx.ui.custom()`과 다른 확장의 `select`·`confirm`·`input`·`editor`를 호스트에서 스택으로 관리합니다. 위 대화상자를 닫으면 이전 설문이 다시 나타나며, 가려진 설문을 `cancel("aborted")`해도 위 대화상자를 닫지 않습니다. 호출마다 새 컴포넌트를 만들고 완료는 해당 factory의 `done`에 맡기세요. 이 패키지는 별도 대화상자 큐를 추가하지 않으며 `ask_user` 도구의 `sequential`·`model-only` 계약도 바뀌지 않습니다.
+Pi 1.5.0은 inline `ctx.ui.custom()`과 다른 확장의 `select`·`confirm`·`input`·`editor`를 호스트에서 스택으로 관리합니다. 위 대화상자를 닫으면 이전 설문이 다시 나타나며, 가려진 설문을 `cancel("aborted")`해도 위 대화상자를 닫지 않습니다. 호출마다 새 컴포넌트를 만들고 완료는 해당 factory의 `done`에 맡기세요. 이 패키지는 별도 대화상자 큐를 추가하지 않으며 `ask_user` 도구의 `sequential`·`model-only` 계약도 바뀌지 않습니다.
+
+Pi 1.5.0에서 답변을 기다리는 inline custom UI는 예제처럼 `blocked: { kind: "question", message: "Waiting for questionnaire answers" }`를 호출 측에서 지정하세요. `ask_user` 도구도 이 고정 메시지를 사용합니다. 호스트는 현재 보이는 대화상자의 상태만 native program status로 보고하며 overlays는 이 옵션을 무시합니다. 질문·옵션·답변·취소 사유·세션 ID를 메시지에 포함하지 마세요. 공개 컴포넌트 자체는 `ctx.ui.custom()`이나 status를 소유하지 않으므로 API와 제출 가드는 바뀌지 않습니다.
 
 `canSubmit(result)`는 **취소가 아닌 제출 직전** 동기적으로 실행됩니다. `false`면 확정·`done`을 실행하지 않고 현재 답변과 UI를 유지하므로 사용자가 화면을 조정하거나 답을 바꾼 뒤 다시 시도할 수 있습니다. 취소는 언제나 가능하며 이 함수를 호출하지 않습니다. 함수를 생략하면 이전과 같이 바로 제출합니다. 예제의 `hostCanShowPrompt`처럼 호스트 가시성은 호출 측에서 측정하고 판단하세요. 설문 UI는 호스트별 정책을 내장하지 않습니다. `defaultValues: ["no"]`는 커서를 아니요로 옮길 뿐 답변을 자동 확정하지 않습니다. 단일 질문은 숫자 선택이나 Enter로 즉시 제출을 시도하므로 확인 전에 검사할 조건은 `canSubmit`에 두세요.

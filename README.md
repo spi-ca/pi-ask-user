@@ -4,7 +4,7 @@ Pi TUI에서 사용자에게 선택형 질문을 하고 구조화된 답변을 �
 
 저장소: <https://github.com/spi-ca/pi-ask-user>
 
-지원 호스트는 **Pi 1.4.0**입니다. `ask_user`는 `exposure: "model-only"`로 모델에 직접 노출되며 codemode·다른 도구의 중첩 호출 대상이 아닙니다. optional peer의 `*`는 이전 Pi 지원 보증이 아닙니다.
+지원 호스트는 **Pi 1.5.0**입니다. `ask_user`는 `exposure: "model-only"`로 모델에 직접 노출되며 codemode·다른 도구의 중첩 호출 대상이 아닙니다. optional peer의 `*`는 이전 Pi 지원 보증이 아닙니다.
 
 ## 핵심 기능
 
@@ -132,6 +132,7 @@ pi install /absolute/path/to/pi-ask-user
 - 질문 하나는 답변 즉시 제출하지만 `requireReview: true`이면 검토 탭으로 이동합니다. 여러 질문은 답변 뒤 다음 미응답 질문으로 이동하고, 모두 답한 뒤 검토 탭에서 제출합니다.
 - 취소된 UI 결과에는 `cancelReason`과 이미 답한 항목이 남습니다. 자유 입력은 앞뒤 공백을 제거해 저장합니다. 가능한 결과가 Pi의 50KB·2000줄 제한을 넘는 설문은 UI를 열지 않고 오류 결과로 반환하므로 어떤 답변 레코드도 텍스트에서 잘리지 않습니다.
 - 도구는 `sequential` 실행 모드라 두 질문이 동시에 TUI를 점유하지 않습니다.
+- Pi 1.5의 native program status에는 보이는 설문을 `question` 대기로 보고하며 고정 메시지만 전달합니다. 다른 대화상자에 가려지거나 복원·종료될 때의 상태는 호스트가 관리하며 shared presence와 독립적입니다.
 - presence 출력은 best-effort입니다. 이벤트 발행 실패나 소비자 부재는 질문 진행에 영향을 주지 않습니다.
 
 ## 문서
