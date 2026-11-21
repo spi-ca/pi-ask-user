@@ -908,7 +908,7 @@ function mouse(
   });
 }
 
-function lineIndex(lines: string[], text: string): number {
+function lineIndex(lines: readonly string[], text: string): number {
   const index = lines.findIndex((line) => line.includes(text));
   expect(index).toBeGreaterThanOrEqual(0);
   return index;
